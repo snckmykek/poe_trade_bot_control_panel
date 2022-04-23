@@ -1,0 +1,28 @@
+<MainScreen>:
+    orientation: "vertical"
+    md_bg_color: app.theme_cls.bg_light
+
+    MDToolbar:
+        title: "Control panel"
+        md_bg_color: self.theme_cls.primary_dark
+
+    MDTabs:
+        id: tabs
+
+        Tab:
+            title: "Основная"
+
+#            Algorithm:
+
+        Tab:
+            title: "Логи"
+
+            Label:
+                text: "Логи"
+
+        Tab:
+            title: "Настройки"
+
+#            Settings1:
+
+<Tab@MDBoxLayout+MDTabsBase>:
