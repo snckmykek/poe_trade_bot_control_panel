@@ -3,16 +3,65 @@
     md_bg_color: app.theme_cls.bg_light
 
     MDToolbar:
-        title: "Control panel"
+        title: app.status
         md_bg_color: self.theme_cls.primary_dark
+        MDIconButton:
+            icon: "play"
+            user_font_size: "40sp"
+            theme_text_color: "Custom"
+            text_color: app.theme_cls.text_color if app.stopped else app.theme_cls.primary_color
+            on_release: app.set_stopped(False)
+
+        MDIconButton:
+            icon: "stop"
+            user_font_size: "40sp"
+            theme_text_color: "Custom"
+            text_color: self.theme_cls.primary_color if app.stopped else app.theme_cls.text_color
+            on_release: app.set_stopped(True)
 
     MDTabs:
         id: tabs
 
         Tab:
             title: "Основная"
+            orientation: "vertical"
+            spacing: "5dp"
+            MDBoxLayout:
+                size_hint_y: None
+                height: "50dp"
+                MDCheckbox:
+                    size_hint_x: .05
+                    on_active: root.set_use_all_items(self.active)
+                MDLabel:
+                    size_hint_x: .5
+                    text: "Предмет"
+                MDLabel:
+                    size_hint_x: .2
+                    text: "Макс цена"
+                MDLabel:
+                    size_hint_x: .2
+                    text: "Балк цена"
+                MDLabel:
+                    size_hint_x: .15
+                    text: "Количество"
+            ScrollView:
+                MDStackLayout:
+                    id: items_list
+                    adaptive_height: True
 
-#            Algorithm:
+            MDBoxLayout:
+                adaptive_height: True
+                size_hint_y: None
+                spacing: "5dp"
+                Widget:
+                MDRectangleFlatIconButton:
+                    text: "Обновить из БД"
+                    icon: "refresh"
+                    on_release: root.refresh_items()
+
+                MDRectangleFlatIconButton:
+                    text: "Сохранить"
+                    icon: "content-save"
 
         Tab:
             title: "Логи"
@@ -25,4 +74,35 @@
 
 #            Settings1:
 
+
 <Tab@MDBoxLayout+MDTabsBase>:
+    padding: "5dp"
+
+
+<ItemBox>:
+    size_hint_y: None
+    height: "50dp"
+    MDCheckbox:
+        size_hint_x: .05
+        id: use
+        active: root.use
+    MDTextField:
+        size_hint_x: .5
+        id: name
+        text: root.name
+        text_color: app.theme_cls.text_color
+    MDTextField:
+        size_hint_x: .2
+        id: name
+        text: str(root.max_price)
+        text_color: app.theme_cls.text_color
+    MDTextField:
+        size_hint_x: .2
+        id: name
+        text: str(root.bulk_price)
+        text_color: app.theme_cls.text_color
+    MDTextField:
+        size_hint_x: .15
+        id: name
+        text: str(root.qty)
+        text_color: app.theme_cls.text_color
