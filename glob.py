@@ -2,23 +2,23 @@ import configparser
 from db_requests import Database
 
 db_path = ""  # Путь до БД
-pause_hotkey = "f12"  # Установки/снятия паузы
-pause_after_trade_hotkey = "ctrl+f12"  # Пауза, но с ожиданием завершения текущей торговли
-close_hotkey = "f11"  # Мгновенное завершение
-close_after_trade_hotkey = "ctrl+f11"  # Завершение программы, но с ожиданием завершения текущей торговли
+hotkey_pause = "f11"  # Установки/снятия паузы (будет ждать завершения всех действий)
+hotkey_stop_action = "f12"  # Остановка текущего действия
+hotkey_close = "ctrl+f11"  # Мгновенное завершение
+hotkey_close_after_actions = "ctrl+f12"  # Завершение программы, но с ожиданием завершения текущей торговли
 db: Database
 
 
 def upload_config():
-    config = configparser.ConfigParser()
-    config.read('config.ini')
+    config = configparser.ConfigParser(inline_comment_prefixes="#")
+    if not config.read('config.ini'):
+        raise FileNotFoundError
 
-    global db_path, pause_hotkey, pause_after_trade_hotkey, close_hotkey, close_after_trade_hotkey, db
+    global db_path, hotkey_pause, hotkey_stop_action, hotkey_close, hotkey_close_after_actions, db
 
     db_path = config['common']['db_path']
-    pause_hotkey = config['common']['pause_hotkey']
-    pause_after_trade_hotkey = config['common']['pause_after_trade_hotkey']
-    close_hotkey = config['common']['close_hotkey']
-    close_after_trade_hotkey = config['common']['close_after_trade_hotkey']
+    hotkey_pause = config['common']['hotkey_pause']
+    hotkey_stop_action = config['common']['hotkey_stop_action']
+    hotkey_close = config['common']['hotkey_close']
+    hotkey_close_after_actions = config['common']['hotkey_close_after_actions']
     db = Database()
-
