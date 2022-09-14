@@ -1,5 +1,5 @@
 import sqlite3
-import glob
+import glob1
 
 from kivymd.app import MDApp
 
@@ -7,7 +7,7 @@ from kivymd.app import MDApp
 class Database(object):
 
     def __init__(self):
-        self.con = sqlite3.connect(fr'{glob.db_path}\database.db')
+        self.con = sqlite3.connect(fr'{glob1.db_path}\database.db')
         self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
         self.sqlite_create_db()
@@ -23,6 +23,25 @@ class Database(object):
             CREATE TABLE IF NOT EXISTS settings(
                 key TEXT NOT NULL PRIMARY KEY,
                 value NOT NULL
+            ) 
+            """)
+
+        # Команды для другого приложения
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settings(
+                key TEXT NOT NULL PRIMARY KEY,
+                value NOT NULL
+            ) 
+            """)
+
+        # Списки значений
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS limited_values(
+                key TEXT NOT NULL,
+                value NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (key, value)
             ) 
             """)
 

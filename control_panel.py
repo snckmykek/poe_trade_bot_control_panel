@@ -1,8 +1,10 @@
 """
 Текущее состояние:
 База данных временно откручена, все настройки находятся в config.ini, для совместимости пустая БД должна быть в папке
+Список actions находится в actions.json
 """
 
+# Настройки окна, должны быть до импорта графических объектов
 from kivy.config import Config
 
 Config.set('graphics', 'resizable', '1')
@@ -29,19 +31,19 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDRectangleFlatButton
 from kivymd.uix.card import MDCard
 from kivymd.uix.dialog import MDDialog
-from kivymd.uix.list import OneLineAvatarListItem
+from kivymd.uix.list import OneLineAvatarListItem, OneLineIconListItem
 from kivymd.uix.selectioncontrol import MDCheckbox
 from kivymd.uix.snackbar import Snackbar
 
 # Из проекта
 from allignedtextinput import AlignedTextInput
-import glob
+import glob1
 import poe_actions
 
 
 class ControlPanelApp(MDApp):
     _anim_timer = None
-    _type_options = ["B", "S"]
+    _type_options = ['B', 'S']
     actions = ListProperty([])
     action_thread = ObjectProperty()
     current_action = ObjectProperty()
@@ -68,11 +70,14 @@ class ControlPanelApp(MDApp):
 
         # Clock.schedule_interval(lambda *_: self.update_data(), 1)
         self._update_timer(True, False)
+
+    def on_start(self):
         self.upload_actions()
+        super(ControlPanelApp, self).on_start()
 
     def init_config(self):
         try:
-            glob.upload_config()
+            glob1.upload_config()
             return True
         except sqlite3.OperationalError:
             error_message = textwrap.dedent(f"""\
@@ -126,45 +131,65 @@ class ControlPanelApp(MDApp):
             self.main.do_next_action(0)
 
     def upload_actions(self):
-        if app.type == "B":
+        if app.type == 'B':
+            stages = []
             self.actions = [
                 {'opacity': 0 if not app.fuckin_good_completed else 1,
                  '_anim': False,
                  'active': False,
                  'index': 0,
-                 'name': "Действие 1",
-                 'func': "poe_actions.test(f'{action.index}. {action.name}')",
-                 'timer': 60,
+                 'name': "Вход",
+                 'func': "poe_actions.simulacrum(action.stages)",
+                 '_timer': 30,
                  'have_timer': False,
                  'stages': [
                      {
-
-                     }
+                         'func': "start_poe()",
+                         'index': 0,
+                         'text': f"Запуск ПОЕ",
+                         'status': 'queue'
+                     },
+                     {
+                         'func': "authorization()",
+                         'index': 1,
+                         'text': f"Авторизация",
+                         'status': 'queue'
+                     },
+                     {
+                         'func': "choice_character()",
+                         'index': 2,
+                         'text': f"Выбор перса",
+                         'status': 'queue'
+                     },
                  ],
-                 'only_start_over': True
+                 'only_start_over': True,
+                 'only_before_pause': False
                  },
 
                 {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 1,
-                 'name': "Действие 2", 'only_start_over': False,
-                 'func': "poe_actions.test(f'{action.index}. {action.name}')", 'timer': 60, 'have_timer': False},
+                 'name': "Действие 2", 'only_start_over': False, 'stages': stages, 'only_before_pause': False,
+                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 60, 'have_timer': False},
                 {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 2,
-                 'name': "Действие 3", 'only_start_over': False,
-                 'func': "poe_actions.test(f'{action.index}. {action.name}')", 'timer': 90, 'have_timer': False},
+                 'name': "Действие 3", 'only_start_over': False, 'stages': stages, 'only_before_pause': False,
+                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 90, 'have_timer': False},
                 {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 3,
-                 'name': "Действие 4", 'only_start_over': False,
-                 'func': "poe_actions.test(f'{action.index}. {action.name}')", 'timer': 30, 'have_timer': False},
+                 'name': "Действие 4", 'only_start_over': False, 'stages': stages, 'only_before_pause': False,
+                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 30, 'have_timer': False},
                 {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 4,
-                 'name': "Действие 5", 'only_start_over': False, 'only_before_pause': True,
-                 'func': "poe_actions.test(f'{action.index}. {action.name}')", 'timer': 45, 'have_timer': False},
+                 'name': "Действие 5", 'only_start_over': False, 'stages': stages, 'only_before_pause': True,
+                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 45, 'have_timer': False}
             ]
-        elif app.type == "S":
+        elif app.type == 'S':
             self.actions = [
                 {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 0,
                  'name': "Действие 1",
-                 'func': "poe_actions.test(f'{self.index}. {self.name}')", 'timer': 0, 'have_timer': False},
+                 'func': "poe_actions.test(f'{self.index}. {self.name}')", '_timer': 0, 'have_timer': False},
             ]
         else:
             self.actions = []
+
+        if not app.current_action:
+            self.main.ids.stages_rv.data = self.actions[0]['stages']
 
     def set_status(self, status, append_current_action=False):
         if append_current_action:
@@ -181,12 +206,11 @@ class ControlPanelApp(MDApp):
 
         if self.running:
             self.need_pause = False
-            self.need_stop_action = False
             self.set_status("Запускаюсь")
             self._update_timer(True)
             self.start_over = start_over
         else:
-            self.main.reset_actions_started_over()
+            self.main.reset_actions_completed()
             if self.need_pause:
                 if not self.timer:
                     self.set_status(f"Остановлен по времени (но дождался завершения действий)")
@@ -199,7 +223,6 @@ class ControlPanelApp(MDApp):
                     self.set_status(f"Остановлен по приказу (но действия уже были остановлены)")
             self._update_timer(False)
             self.need_pause = False
-            self.need_stop_action = False
             self.start_over = True
 
     def start_stop(self, start):  # button callback
@@ -222,6 +245,22 @@ class ControlPanelApp(MDApp):
     def update_current_action(self, action):
         self.current_action = action
         self.action_thread = threading.Thread(target=lambda *_: eval(action.func), daemon=True)
+
+    @mainthread
+    def update_current_stage(self, index, error=""):
+        if self.current_stage:
+            # Меняем статус у предыдущего
+            if error:
+                self.current_stage.status = 'error'
+                self.current_action.change_active(False)
+                self.set_running(False)
+                Clock.schedule_once(lambda *_: self.set_status(f"Этап: {self.current_stage.text}. Остановлен из-за ошибки:\n{error}", True))
+                return
+            else:
+                self.current_stage.status = 'completed'
+
+        self.current_stage = self.main.ids.stages_parent.children[-(index + 1)]
+        self.current_stage.status = 'progress'
 
     def _update_timer(self, for_work, need_start=True):
         if self._anim_timer:
@@ -297,10 +336,12 @@ class MainScreen(MDBoxLayout):
         :param go_to: Перейдет к действию с этим индексом. None - к следующему.
         :return:
         """
-        actions_list = self.ids.actions_parent.children
 
         if app.current_action:
             app.current_action.change_active(False)  # Выключаем "плей" на текущем действии
+            app.current_action.reset_timer()
+
+        actions_list = self.ids.actions_parent.children
 
         # Устанавливаем новое действие в текущее и запускаем его
         if not app.current_action:  # Это первый запуск
@@ -321,17 +362,20 @@ class MainScreen(MDBoxLayout):
         if not app.current_action.can_start_action():  # Если действие "погашено", тогда сразу запускаем некст
             Clock.schedule_once(lambda *_: app.main.do_next_action())
         else:  # Если всё ок, то стартуем его
+            # Перезаливаем этапы, чтобы обновить статусы и прочее, что было изменено в процессе в предыдущий раз
+            app.current_action.stages = app.actions[app.current_action.index]['stages']
+            self.ids.stages_rv.refresh_from_data()
             app.current_action.play_pause(True)
 
         if app.current_action == actions_list[0]:  # Если последнее действие, сбиваем флаг
             app.start_over = False
 
     def refresh_items(self):
-        if app.type == "B":
+        if app.type == 'B':
             self.ids.items_box.data = [{
                 'name': f"item test (B) {i}",
             } for i in range(20)]
-        elif app.type == "S":
+        elif app.type == 'S':
             self.ids.items_box.data = [{
                 'name': f"item test (S) {i}",
             } for i in range(20)]
@@ -348,10 +392,10 @@ class MainScreen(MDBoxLayout):
         for item in self.ids.items_list.children:
             item.use = value
 
-    def reset_actions_started_over(self):
-        # map(ActionBox.reset_started_over, self.ids.actions_parent.children)
+    def reset_actions_completed(self):
+        # map(ActionBox.reset_completed, self.ids.actions_parent.children)
         for action in self.ids.actions_parent.children:
-            action.started_over = False
+            action.completed = False
 
     def update_logs(self):
         try:
@@ -391,7 +435,8 @@ class ActionBox(MDCard, RoundedRectangularElevationBehavior):
     _anim_timer = None
     _min_opacity = NumericProperty(.3)
     _max_opacity = NumericProperty(1)
-    started_over = BooleanProperty(False)
+    _timer = NumericProperty(0)
+    completed = BooleanProperty(False)
     active = BooleanProperty(False)
     func = StringProperty("")
     have_timer = BooleanProperty(False)
@@ -404,7 +449,8 @@ class ActionBox(MDCard, RoundedRectangularElevationBehavior):
 
     def __init__(self, **kwargs):
         super(ActionBox, self).__init__(**kwargs)
-        self._anim_timer = Animation(timer=0, duration=self.timer)
+        self._anim_timer = Animation(_timer=0, duration=self._timer)
+        Clock.schedule_once(lambda *_: self.reset_timer())
 
     def play_pause(self, is_active=True):
         if is_active and not self.can_start_action():
@@ -417,32 +463,43 @@ class ActionBox(MDCard, RoundedRectangularElevationBehavior):
         self.change_active(is_active)
         if is_active:
             app.need_stop_action = False
-            app.set_running(True)
+            app.set_running(True, self.index == 0)
             self.go_action()
         else:
             app.need_stop_action = True
 
     def can_start_action(self):
         return not ((self.only_before_pause and not app.need_pause)
-                    or (self.only_start_over and (self.started_over or not app.start_over)))
+                    or (self.only_start_over and (self.completed or not app.start_over)))
 
     def change_active(self, value):
         self.active = value
         self._change_elevation()
         if self.active:
+            self.reset_timer()
             self._anim_timer = Animation(timer=0, duration=self.timer)
+            self._anim_timer.bind(on_complete=self.timeout)
             self._anim_timer.start(self)
         else:
-            if app.start_over:
-                self.started_over = True
+            self.completed = True
             self._anim_timer.cancel(self)
 
     def go_action(self):
         app.update_current_action(self)
         app.action_thread.start()
 
-    def reset_started_over(self):
-        self.started_over = False
+    def reset_completed(self):
+        self.completed = False
+
+    def timeout(self, *args):
+        if not self.active:
+            return
+
+        self.change_active(False)
+        app.need_stop_action = True
+
+    def reset_timer(self):
+        self.timer = self._timer
 
     def _change_elevation(self):
         if self._anim_elevation:
@@ -479,8 +536,16 @@ class LogBox(MDBoxLayout):
         super(LogBox, self).__init__(**kwargs)
 
 
-class OneLineQueue(OneLineAvatarListItem):
+class OneLineQueue(OneLineIconListItem):
+    index = NumericProperty(0)
     left_widget_source = StringProperty("")
+    status = OptionProperty('queue', options=['queue', 'progress', 'completed', 'error'])
+    widgets = {
+        'queue': 'sleep',
+        'progress': 'play-circle-outline',
+        'completed': 'check',
+        'error': 'close-circle'
+    }
 
 
 class MiniCheckBox(MDCheckbox):
@@ -506,4 +571,4 @@ class DatetimeTextInput(AlignedTextInput):
 app: ControlPanelApp
 if __name__ == "__main__":
     ControlPanelApp().run()
-    app.on_start()
+    app = MDApp.get_running_app()

@@ -6,6 +6,7 @@ hotkey_pause = "f11"  # Установки/снятия паузы (будет �
 hotkey_stop_action = "f12"  # Остановка текущего действия
 hotkey_close = "ctrl+f11"  # Мгновенное завершение
 hotkey_close_after_actions = "ctrl+f12"  # Завершение программы, но с ожиданием завершения текущей торговли
+window_resolutions = []
 db: Database
 
 
@@ -14,11 +15,12 @@ def upload_config():
     if not config.read('config.ini'):
         raise FileNotFoundError
 
-    global db_path, hotkey_pause, hotkey_stop_action, hotkey_close, hotkey_close_after_actions, db
+    global db_path, hotkey_pause, hotkey_stop_action, hotkey_close, hotkey_close_after_actions, db, window_resolutions
 
     db_path = config['common']['db_path']
     hotkey_pause = config['common']['hotkey_pause']
     hotkey_stop_action = config['common']['hotkey_stop_action']
     hotkey_close = config['common']['hotkey_close']
     hotkey_close_after_actions = config['common']['hotkey_close_after_actions']
+    window_resolutions = config['common']['window_resolutions'].split(",")
     db = Database()

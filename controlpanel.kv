@@ -1,5 +1,6 @@
 #: import AlignedTextInput allignedtextinput.AlignedTextInput
 #: import datetime datetime.datetime
+#: import Snackbar kivymd.uix.snackbar.Snackbar
 
 <MainScreen>
     orientation: "vertical"
@@ -65,11 +66,12 @@
                     orientation: 'vertical'
                     radius: [0, 0, 6, 6]
                     RecycleView:
-                        data: root.stages
+                        id: stages_rv
+                        data: app.current_action.stages if app.current_action else []
                         scroll_type: ['bars', 'content']
                         viewclass: 'OneLineQueue'
                         RecycleBoxLayout:
-                            id: deal_queue_parent
+                            id: stages_parent
                             default_size: None, '48dp'
                             default_size_hint: 1, None
                             height: self.minimum_height
@@ -96,12 +98,14 @@
                 MDRectangleFlatIconButton:
                     id: button_queue
                     opacity: 0 if not app.fuckin_good_completed else 1 # Для стартового ништяка
+                    on_release: Snackbar(text="Еще не работает:)").open()
                     icon: 'human-queue' if app.type == "S" else 'format-list-numbered'
                     text: "Очередь сделок"
                     size_hint_x: 1
                 MDRectangleFlatIconButton:
                     id: button_blacklist
                     opacity: 0 if not app.fuckin_good_completed else 1 # Для стартового ништяка
+                    on_release: Snackbar(text="Еще не работает:)").open()
                     icon: 'playlist-remove'
                     text: "Черный список"
                     size_hint_x: 1
@@ -264,43 +268,57 @@
             orientation: "vertical"
             spacing: "5dp"
 
-#            MDStackLayout:
-#                SettingRow:
-#                    text: "Это исполнитель"
-#                    MDCheckbox:
-#                        id: setting_checkbox_is_executor
-#                        size_hint_x: .45
+            MDStackLayout:
+                SettingRow:
+                    text: "Это исполнитель"
+                    MDCheckbox:
+                        id: setting_checkbox_is_executor
+                        size_hint_x: .45
+                        on_state: app._set_is_executor(*args)
+                SettingRow:
+                    text: "Разрешение окна"
+                    MDDropDownItem:
+                        id: setting_checkbox_window_resolution
+                        size_hint_x: .45
+                        text: 'Item'
+                        on_release: self.open()
 #                        on_state: app._set_is_executor(*args)
-#                SettingRow:
-#                    text: "Сколько работать от-до (в сек)"
-#                    MDTextField:
-#                        id: setting_textfield_working_from
-#                        size_hint_x: .2
-#                        theme_text_color: app.theme_cls.text_color
-#                    Widget:
-#                        size_hint_x: .05
-#                    MDTextField:
-#                        id: setting_textfield_working_to
-#                        size_hint_x: .2
-#                        text_color: app.theme_cls.text_color
-#                SettingRow:
-#                    text: "Сколько перерыв от-до (в сек)"
-#                    MDTextField:
-#                        id: setting_textfield_pause_from
-#                        size_hint_x: .2
-#                        text_color: app.theme_cls.text_color
-#                    Widget:
-#                        size_hint_x: .05
-#                    MDTextField:
-#                        id: setting_textfield_pause_to
-#                        size_hint_x: .2
-#                        text_color: app.theme_cls.text_color
+                SettingRow:
+                    text: "Сколько работать от-до (в сек)"
+                    MDTextField:
+                        id: setting_textfield_working_from
+                        size_hint_x: .2
+                        theme_text_color: app.theme_cls.text_color
+                    Widget:
+                        size_hint_x: .05
+                    MDTextField:
+                        id: setting_textfield_working_to
+                        size_hint_x: .2
+                        text_color: app.theme_cls.text_color
+                SettingRow:
+                    text: "Сколько перерыв от-до (в сек)"
+                    MDTextField:
+                        id: setting_textfield_pause_from
+                        size_hint_x: .2
+                        text_color: app.theme_cls.text_color
+                    Widget:
+                        size_hint_x: .05
+                    MDTextField:
+                        id: setting_textfield_pause_to
+                        size_hint_x: .2
+                        text_color: app.theme_cls.text_color
 
 
-<OneLineQueue@OneLineAvatarListItem>
-    left_widget_source: ""
-    ImageLeftWidget:
-        source: root.left_widget_source
+<OneLineQueue@OneLineIconListItem>
+    divider: "Inset"
+    divider_color:
+        app.theme_cls.primary_dark if root.status == 'progress' or root.status == 'error' else (.2, .2, .2, .8)
+    IconLeftWidget:
+        icon: root.widgets[root.status]
+        theme_text_color: "Custom"
+        text_color:
+            app.theme_cls.primary_dark if root.status == 'progress' or root.status == 'error' \
+            else app.theme_cls.text_color
 
 <Tab@MDBoxLayout+MDTabsBase>
     padding: "5dp"
@@ -311,7 +329,7 @@
     opacity:
         0 if not app.fuckin_good_completed else \
         (self._min_opacity if ((self.only_before_pause and not app.need_pause) \
-        or (self.only_start_over and (self.started_over or not app.start_over))) \
+        or (self.only_start_over and (self.completed or not app.start_over))) \
         else self._max_opacity)
     style: "outlined"
     line_color: app.theme_cls.primary_dark if root.active else (.2, .2, .2, .8)
@@ -319,13 +337,15 @@
         orientation: 'vertical'
         MDLabel:
             text: root.name
-        MDLabel:
-            text: root.name
+#        MDLabel:
+#            text: ""
     MDLabel:
         text: "{}".format(datetime.utcfromtimestamp(root.timer).strftime('%M:%S'))
         size_hint_x: .15
     MDIconButton:
         icon: 'stop' if root.active else 'play'
+        theme_text_color: "Custom"
+        text_color: app.theme_cls.primary_dark if root.active else app.theme_cls.text_color
         on_press: root.play_pause(not root.active)
         pos_hint: {"center_x": 1, "center_y": .5}
 
