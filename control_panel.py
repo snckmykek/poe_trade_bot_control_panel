@@ -5,6 +5,8 @@
 """
 
 # Настройки окна, должны быть до импорта графических объектов
+import json
+
 from kivy.config import Config
 
 Config.set('graphics', 'resizable', '1')
@@ -22,13 +24,13 @@ from kivy.animation import Animation
 from kivy.clock import Clock, mainthread
 from kivy.metrics import sp, dp
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty, ListProperty, OptionProperty, \
-    ObjectProperty
+    ObjectProperty, DictProperty
 
 # Киви МД
 from kivymd.app import MDApp
 from kivymd.uix.behaviors import RoundedRectangularElevationBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDRectangleFlatButton
+from kivymd.uix.button import MDRectangleFlatButton, MDRectangleFlatIconButton
 from kivymd.uix.card import MDCard
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.list import OneLineAvatarListItem, OneLineIconListItem
@@ -37,33 +39,32 @@ from kivymd.uix.snackbar import Snackbar
 
 # Из проекта
 from allignedtextinput import AlignedTextInput
-import glob1
-import poe_actions
+import gv
+import actions
+
+app = MDApp.get_running_app()
 
 
 class ControlPanelApp(MDApp):
     _anim_timer = None
-    _type_options = ['B', 'S']
-    actions = ListProperty([])
+    _type_options = {'B': 'alpha-b-box-outline', 'S': 'alpha-s-box-outline', 'F1': 'keyboard-f1'}
+    _types = list(_type_options.keys())
+    actions = DictProperty()
     action_thread = ObjectProperty()
     current_action = ObjectProperty()
     current_stage = ObjectProperty()
-    fuckin_good_completed = BooleanProperty(True)
+    first_run_animation_completed = BooleanProperty(True)
     main = None
     need_pause = BooleanProperty(False)
     need_stop_action = BooleanProperty(False)
-    type = OptionProperty(_type_options[0], options=_type_options)
+    type = OptionProperty(_types[0], options=_types)
     timer = NumericProperty(0)
     start_over = BooleanProperty(True)
     status = StringProperty("Я родился")
     running = BooleanProperty(False)
-    is_executor = BooleanProperty(True)
 
     def __init__(self, **kwargs):
-        super(ControlPanelApp, self).__init__(**kwargs)
-
-        global app
-        app = MDApp.get_running_app()
+        self.action_thread = threading.Thread(target=lambda *_: actions.do_current_action(), daemon=True)
 
         if not self.init_config():
             return
@@ -71,17 +72,48 @@ class ControlPanelApp(MDApp):
         # Clock.schedule_interval(lambda *_: self.update_data(), 1)
         self._update_timer(True, False)
 
+        super(ControlPanelApp, self).__init__(**kwargs)
+
+    def build(self):
+        self.theme_cls.theme_style = "Dark"
+        self.theme_cls.primary_palette = "Orange"
+        if not self.main:
+            self.main = MainScreen()
+        return self.main
+
+    def change_type(self):
+        if self.running:
+            Snackbar(text="Бот работает. Сначала нужно остановить бота").open()
+            return
+
+        try:
+            self.type = self._types[self._types.index(self.type) + 1]
+        except IndexError:
+            self.type = self._types[0]
+
+        self.main.upload_buttons()
+        self.main.ids.action_tab.fill_default_stages()
+
+    @mainthread
+    def do_next_action(self, go_to=None):
+        self.action_thread = threading.Thread(target=lambda *_: actions.do_current_action(), daemon=True)
+        self.main.ids.action_tab.do_next_action(go_to)
+
     def on_start(self):
+        global app
+        app = MDApp.get_running_app()
+
         self.upload_actions()
+        self.main.upload_buttons()
         super(ControlPanelApp, self).on_start()
 
     def init_config(self):
         try:
-            glob1.upload_config()
+            gv.upload_config()
             return True
         except sqlite3.OperationalError:
             error_message = textwrap.dedent(f"""\
-                Не найдена БД с именем database.db в папке: {glob.db_path}.
+                Не найдена БД с именем database.db в папке: {gv.db_path}.
                 Изменить путь можно в файле config.ini в папке программы.
                 Сейчас программа будет закрыта""")
         except FileNotFoundError:
@@ -102,23 +134,6 @@ class ControlPanelApp(MDApp):
         Clock.schedule_once(lambda *_: dialog.open())
         return False
 
-    def build(self):
-        self.theme_cls.theme_style = "Dark"
-        self.theme_cls.primary_palette = "Orange"
-        if not self.main:
-            self.main = MainScreen()
-        return self.main
-
-    def change_type(self):
-        if self.running:
-            Snackbar(text="Бот работает. Сначала нужно остановить бота").open()
-            return
-
-        try:
-            self.type = self._type_options[self._type_options.index(self.type) + 1]
-        except IndexError:
-            self.type = self._type_options[0]
-
     def _on_complete_timer(self, *args):
         if self.running:
             if self.action_thread and self.action_thread.is_alive():
@@ -128,76 +143,39 @@ class ControlPanelApp(MDApp):
                 self.set_running(False)
         else:
             self.set_running(True, True)
-            self.main.do_next_action(0)
+            self.do_next_action(0)
 
     def upload_actions(self):
-        if app.type == 'B':
-            stages = []
-            self.actions = [
-                {'opacity': 0 if not app.fuckin_good_completed else 1,
-                 '_anim': False,
-                 'active': False,
-                 'index': 0,
-                 'name': "Вход",
-                 'func': "poe_actions.simulacrum(action.stages)",
-                 '_timer': 30,
-                 'have_timer': False,
-                 'stages': [
-                     {
-                         'func': "start_poe()",
-                         'index': 0,
-                         'text': f"Запуск ПОЕ",
-                         'status': 'queue'
-                     },
-                     {
-                         'func': "authorization()",
-                         'index': 1,
-                         'text': f"Авторизация",
-                         'status': 'queue'
-                     },
-                     {
-                         'func': "choice_character()",
-                         'index': 2,
-                         'text': f"Выбор перса",
-                         'status': 'queue'
-                     },
-                 ],
-                 'only_start_over': True,
-                 'only_before_pause': False
-                 },
+        with open('actions.json', encoding='utf-8') as f:
+            _actions = json.load(f)
 
-                {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 1,
-                 'name': "Действие 2", 'only_start_over': False, 'stages': stages, 'only_before_pause': False,
-                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 60, 'have_timer': False},
-                {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 2,
-                 'name': "Действие 3", 'only_start_over': False, 'stages': stages, 'only_before_pause': False,
-                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 90, 'have_timer': False},
-                {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 3,
-                 'name': "Действие 4", 'only_start_over': False, 'stages': stages, 'only_before_pause': False,
-                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 30, 'have_timer': False},
-                {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 4,
-                 'name': "Действие 5", 'only_start_over': False, 'stages': stages, 'only_before_pause': True,
-                 'func': "poe_actions.simulacrum(action.stages)", '_timer': 45, 'have_timer': False}
-            ]
-        elif app.type == 'S':
-            self.actions = [
-                {'opacity': 0 if not app.fuckin_good_completed else 1, '_anim': False, 'active': False, 'index': 0,
-                 'name': "Действие 1",
-                 'func': "poe_actions.test(f'{self.index}. {self.name}')", '_timer': 0, 'have_timer': False},
-            ]
-        else:
-            self.actions = []
+        for list_actions in _actions.values():
+            for i, action in enumerate(list_actions):
+                action.update({
+                    'opacity': 0 if not app.first_run_animation_completed else 1,
+                    '_anim': False,
+                    'active': False,
+                    'index': i,
+                    '_timer': action['timer'] if ('timer' in action) else 0,
+                    'have_timer': 'timer' in action
+                })
 
-        if not app.current_action:
-            self.main.ids.stages_rv.data = self.actions[0]['stages']
+                for j, stage in enumerate(action['stages']):
+                    stage.update({
+                        'index': j,
+                        'status': 'queue'
+                    })
 
-    def set_status(self, status, append_current_action=False):
+        self.actions = _actions
+        self.main.ids.action_tab.fill_default_stages()
+
+    def set_status(self, status, append_current_action=False, append_current_stage=False):
+        if append_current_stage:
+            status = f"[{self.current_stage.text}] " + status
         if append_current_action:
-            self.status = f"[{self.current_action.name}] {status}"
-        else:
-            self.status = status
+            status = f"[{self.current_action.name}] " + status
+        self.status = status
 
-    @mainthread
     def set_running(self, value, start_over=False):
         if self.running == value:
             return
@@ -210,7 +188,7 @@ class ControlPanelApp(MDApp):
             self._update_timer(True)
             self.start_over = start_over
         else:
-            self.main.reset_actions_completed()
+            self.main.ids.action_tab.reset_actions_completed()
             if self.need_pause:
                 if not self.timer:
                     self.set_status(f"Остановлен по времени (но дождался завершения действий)")
@@ -225,42 +203,11 @@ class ControlPanelApp(MDApp):
             self.need_pause = False
             self.start_over = True
 
-    def start_stop(self, start):  # button callback
-        if self.running == start:
-            return
-
-        if start:
-            self.set_running(True, True)
-            self.main.do_next_action(0)
-            Snackbar(text="Запущен. Запахло наживой!!1").open()
-        else:
-            if self.action_thread and self.action_thread.is_alive():
-                self.set_status(f"Останавливаюсь. Заканчиваю последний цикл")
-                self.need_pause = True
-                Snackbar(text="Буду остановлен после завершения последнего действия").open()
-            else:
-                self.set_running(False)
-                Snackbar(text="Остановлен").open()
-
     def update_current_action(self, action):
         self.current_action = action
-        self.action_thread = threading.Thread(target=lambda *_: eval(action.func), daemon=True)
 
-    @mainthread
-    def update_current_stage(self, index, error=""):
-        if self.current_stage:
-            # Меняем статус у предыдущего
-            if error:
-                self.current_stage.status = 'error'
-                self.current_action.change_active(False)
-                self.set_running(False)
-                Clock.schedule_once(lambda *_: self.set_status(f"Этап: {self.current_stage.text}. Остановлен из-за ошибки:\n{error}", True))
-                return
-            else:
-                self.current_stage.status = 'completed'
-
-        self.current_stage = self.main.ids.stages_parent.children[-(index + 1)]
-        self.current_stage.status = 'progress'
+    def update_current_stage(self, stage):
+        self.current_stage = stage
 
     def _update_timer(self, for_work, need_start=True):
         if self._anim_timer:
@@ -286,89 +233,13 @@ class MainScreen(MDBoxLayout):
 
     def __init__(self, **kwargs):
         super(MainScreen, self).__init__(**kwargs)
-        self._refresh_tabs()
 
-    def fuckin_good_start(self):
-        anim = Animation(opacity=1, d=.75, transition='in_elastic')
-        anim.bind(on_complete=self.fuckin_good_on_complete_anim)
-        anim.start(self.ids.actions_parent.children[-1])
+    def first_run_animation_start(self):
+        self.ids.action_tab.first_run_animation_start()
 
-    def fuckin_good_on_complete_anim(self, anim, obj):
-        if obj in self.ids.actions_parent.children:
-            if obj != self.ids.actions_parent.children[0]:
-                action = self.ids.actions_parent.children[-(obj.index + 2)]
-                anim = Animation(opacity=1 if not action.only_before_pause else .5, d=.75, transition='in_elastic')
-                anim.bind(on_complete=self.fuckin_good_on_complete_anim)
-                anim.start(action)
-            else:
-                delta = self.ids.button_blacklist.parent.height - self.ids.button_blacklist.y + dp(10)
-                self.ids.button_blacklist.y += delta
-                self.ids.button_blacklist.opacity = 1
-                anim = Animation(y=self.ids.button_blacklist.y - delta, d=1.25, transition='out_bounce')
-                anim.start(self.ids.button_blacklist)
-
-                delta = self.ids.button_queue.parent.height - self.ids.button_queue.y + dp(10)
-                self.ids.button_queue.y += delta
-                self.ids.button_queue.opacity = 1
-                anim = Animation(y=self.ids.button_queue.y - delta, d=1.25, transition='out_bounce')
-                anim.bind(on_complete=self.fuckin_good_on_complete_anim)
-                Clock.schedule_once(lambda *_: anim.start(self.ids.button_queue), .65)
-        elif obj == self.ids.button_queue:
-            delta = self.ids.stages_box.parent.height - self.ids.stages_box.y + dp(10)
-            self.ids.stages_box.y += delta
-            self.ids.stages_box.opacity = 1
-            anim = Animation(y=self.ids.stages_box.y - delta, d=2, transition='linear')
-            anim.bind(on_complete=self.fuckin_good_on_complete_anim)
-            anim.start(self.ids.stages_box)
-        else:
-            app.fuckin_good_completed = True
-            app.start_stop(True)
-
-    @mainthread
-    def do_next_action(self, go_to=None):
-        """
-        Может вызываться из любого потока, но запускается в мейн.
-        Логика:
-        1. Запускает следующий этап текущего действия или первый этап следующего действия.
-        2. Если последний - запускает первый этап первого действия.
-        3. Если app.need_pause, то по завершению последнего этапа последнего действия, останавливается.
-        :param start_over: Начать сначала + использовать действия, с флагом only_start_over
-        :param go_to: Перейдет к действию с этим индексом. None - к следующему.
-        :return:
-        """
-
-        if app.current_action:
-            app.current_action.change_active(False)  # Выключаем "плей" на текущем действии
-            app.current_action.reset_timer()
-
-        actions_list = self.ids.actions_parent.children
-
-        # Устанавливаем новое действие в текущее и запускаем его
-        if not app.current_action:  # Это первый запуск
-            # Элементы загружаются в обратном порядке. Последний - это первый из self.actions
-            app.current_action = actions_list[-1]
-        elif go_to is not None:  # Указано, к какому действию надо перейти
-            app.current_action = actions_list[-(go_to + 1)]
-        elif app.current_action == actions_list[0]:  # Это было последнее действие (Элементы в обратном порядке)
-            if not app.need_pause:
-                app.current_action = actions_list[-1]
-            else:
-                app.set_running(False)
-                return
-        else:
-            # Следующий объект в списке
-            app.current_action = actions_list[-(app.current_action.index + 2)]
-
-        if not app.current_action.can_start_action():  # Если действие "погашено", тогда сразу запускаем некст
-            Clock.schedule_once(lambda *_: app.main.do_next_action())
-        else:  # Если всё ок, то стартуем его
-            # Перезаливаем этапы, чтобы обновить статусы и прочее, что было изменено в процессе в предыдущий раз
-            app.current_action.stages = app.actions[app.current_action.index]['stages']
-            self.ids.stages_rv.refresh_from_data()
-            app.current_action.play_pause(True)
-
-        if app.current_action == actions_list[0]:  # Если последнее действие, сбиваем флаг
-            app.start_over = False
+    def first_run_animation_after(self):
+        app.first_run_animation_completed = True
+        self.start_stop(True)
 
     def refresh_items(self):
         if app.type == 'B':
@@ -392,10 +263,22 @@ class MainScreen(MDBoxLayout):
         for item in self.ids.items_list.children:
             item.use = value
 
-    def reset_actions_completed(self):
-        # map(ActionBox.reset_completed, self.ids.actions_parent.children)
-        for action in self.ids.actions_parent.children:
-            action.completed = False
+    def start_stop(self, start):  # button callback
+        if app.running == start:
+            return
+
+        if start:
+            app.set_running(True, True)
+            self.ids.action_tab.do_next_action(0)
+            Snackbar(text="Запущен").open()
+        else:
+            if app.action_thread and app.action_thread.is_alive():
+                app.set_status(f"Останавливаюсь. Заканчиваю последний цикл")
+                app.need_pause = True
+                Snackbar(text="Буду остановлен после завершения последнего действия").open()
+            else:
+                app.set_running(False)
+                Snackbar(text="Остановлен").open()
 
     def update_logs(self):
         try:
@@ -413,6 +296,85 @@ class MainScreen(MDBoxLayout):
         self.fill_logs()
         self.ids.logs_box.scroll_y = 0
 
+    def upload_buttons(self):
+        buttons = self.ids.action_tab.ids.buttons
+        buttons.clear_widgets()
+
+        if app.type == "B":
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'calculator-variant-outline'
+            button.size_hint_x = 1
+            button.text = "Настройки цен"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'format-list-numbered'
+            button.size_hint_x = 1
+            button.text = "Очередь сделок"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'playlist-remove'
+            button.size_hint_x = 1
+            button.text = "Черный список"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'calendar-month'
+            button.size_hint_x = 1
+            button.text = "Статистика"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+        elif app.type == "S":
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'calculator-variant-outline'
+            button.size_hint_x = 1
+            button.text = "Настройки цен"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'human-queue'
+            button.size_hint_x = 1
+            button.text = "Очередь сделок"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'playlist-remove'
+            button.size_hint_x = 1
+            button.text = "Черный список"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'calendar-month'
+            button.size_hint_x = 1
+            button.text = "Статистика"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
+        elif app.type == "F1":
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = 'calendar-month'
+            button.size_hint_x = 1
+            button.text = "Статистика"
+            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            buttons.add_widget(button)
+
     def fill_logs(self):
         self.ids.logs_box.data = [{
             'text': "Тестовый текст лога " + str(x),
@@ -423,89 +385,11 @@ class MainScreen(MDBoxLayout):
             'datetime': datetime.now().strftime("%b %d %H:%M:%S"),
         } for x in range(10000)]
 
-    def _refresh_tabs(self):
-        pass
-        # self.refresh_items()
-        # self.refresh_logs()
-        # self.refresh_settings()
-
-
-class ActionBox(MDCard, RoundedRectangularElevationBehavior):
-    _anim_elevation = None
-    _anim_timer = None
-    _min_opacity = NumericProperty(.3)
-    _max_opacity = NumericProperty(1)
-    _timer = NumericProperty(0)
-    completed = BooleanProperty(False)
-    active = BooleanProperty(False)
-    func = StringProperty("")
-    have_timer = BooleanProperty(False)
-    index = NumericProperty(0)
-    name = StringProperty("")
-    only_before_pause = BooleanProperty(False)
-    only_start_over = BooleanProperty(False)
-    stages = ListProperty([])
-    timer = NumericProperty(0)
-
-    def __init__(self, **kwargs):
-        super(ActionBox, self).__init__(**kwargs)
-        self._anim_timer = Animation(_timer=0, duration=self._timer)
-        Clock.schedule_once(lambda *_: self.reset_timer())
-
-    def play_pause(self, is_active=True):
-        if is_active and not self.can_start_action():
-            return
-
-        if is_active and app.action_thread and app.action_thread.is_alive():
-            Snackbar(text="Для запуска действия, нужно остановить все остальные").open()
-            return
-
-        self.change_active(is_active)
-        if is_active:
-            app.need_stop_action = False
-            app.set_running(True, self.index == 0)
-            self.go_action()
-        else:
-            app.need_stop_action = True
-
-    def can_start_action(self):
-        return not ((self.only_before_pause and not app.need_pause)
-                    or (self.only_start_over and (self.completed or not app.start_over)))
-
-    def change_active(self, value):
-        self.active = value
-        self._change_elevation()
-        if self.active:
-            self.reset_timer()
-            self._anim_timer = Animation(timer=0, duration=self.timer)
-            self._anim_timer.bind(on_complete=self.timeout)
-            self._anim_timer.start(self)
-        else:
-            self.completed = True
-            self._anim_timer.cancel(self)
-
-    def go_action(self):
-        app.update_current_action(self)
-        app.action_thread.start()
-
-    def reset_completed(self):
-        self.completed = False
-
-    def timeout(self, *args):
-        if not self.active:
-            return
-
-        self.change_active(False)
-        app.need_stop_action = True
-
-    def reset_timer(self):
-        self.timer = self._timer
-
-    def _change_elevation(self):
-        if self._anim_elevation:
-            self._anim_elevation.cancel(self)
-        self._anim_elevation = Animation(elevation=0 if self.active else dp(12), d=0.08)
-        self._anim_elevation.start(self)
+    def on_tab_switch(
+            self, instance_tabs, instance_tab, instance_tab_label, tab_text
+    ):
+        if instance_tab.tab_label_text == "Настройки":
+            instance_tab.children[0].refresh_settings()
 
 
 class ItemBox(MDBoxLayout):
@@ -568,7 +452,6 @@ class DatetimeTextInput(AlignedTextInput):
             return super().insert_text(substring, from_undo=from_undo)
 
 
-app: ControlPanelApp
 if __name__ == "__main__":
     ControlPanelApp().run()
     app = MDApp.get_running_app()

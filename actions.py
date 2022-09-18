@@ -5,21 +5,24 @@ import pyautogui
 import numpy as np
 import pywintypes
 import win32gui
+from kivy.clock import Clock
 from kivymd.app import MDApp
 
 
-def simulacrum(stages):
+def do_current_action():
     app = MDApp.get_running_app()
+    current_action = app.current_action
+    action_tab = app.main.ids.action_tab
 
-    for stage in stages:
+    for stage in current_action.stages:
         if need_stop_action():
             if not app.current_action.timer:  # Отвалился по таймингу
                 # Можно прописать, что делать, когда тайминг действия закончился. Сейчас - начинаем заново
-                app.main.do_next_action(0)
+                current_action.func_timer_over()
+                # app.main.do_next_action(0)
             return
 
-        app.set_status(f"Выполняю: {stage['text']}", True)
-        app.update_current_stage(stage['index'])
+        Clock.schedule_once(lambda *_: action_tab.report_current_stage(stage['index']))
 
         try:
             error = eval(stage['func'])
@@ -27,10 +30,10 @@ def simulacrum(stages):
             error = str(e)
 
         if error:
-            app.update_current_stage(stage['index'], error)
+            Clock.schedule_once(lambda *_: action_tab.report_current_stage(stage['index'], error))
             return
 
-    app.main.do_next_action()
+    Clock.schedule_once(lambda *_: app.do_next_action())
 
 
 def need_stop_action():
@@ -46,8 +49,10 @@ def need_stop_action():
 
 # region Вход
 
-
 def start_poe():
+    time.sleep(2)
+    return
+
     pyautogui.screenshot(f"images/screenshots/_desktop.png", )
     img_rgb = cv2.imread(f"images/screenshots/_desktop.png")
     img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
@@ -73,6 +78,73 @@ def choice_character():
 
 # endregion
 
+# region Выход из ПОЕ на перерыв
+def logout():
+    time.sleep(2)
+
+
+# endregion
+
+# region Продажа. Подготовка
+
+def check_stash():
+    time.sleep(2)
+
+
+def wait_trade_info():
+    time.sleep(2)
+
+
+# endregion
+
+# region Продажа. Запрос сделки
+def deal_request():
+    time.sleep(2)
+
+
+def take_currency():
+    time.sleep(2)
+
+
+def teleport():
+    time.sleep(2)
+
+
+# endregion
+
+# region Продажа. Сделка
+def wait_trade():
+    time.sleep(2)
+
+
+def put_currency():
+    time.sleep(2)
+
+
+def check_items():
+    time.sleep(2)
+
+
+def wait_confirm():
+    time.sleep(2)
+
+
+# endregion
+
+# region Продажа. ТП в свой хайдаут
+def go_home():
+    time.sleep(2)
+
+
+# endregion
+
+# region test
+
+def test():
+    time.sleep(3)
+
+
+#endregion
 
 # region Общие функции
 

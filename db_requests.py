@@ -1,5 +1,5 @@
 import sqlite3
-import glob1
+import gv
 
 from kivymd.app import MDApp
 
@@ -7,7 +7,7 @@ from kivymd.app import MDApp
 class Database(object):
 
     def __init__(self):
-        self.con = sqlite3.connect(fr'{glob1.db_path}\database.db')
+        self.con = sqlite3.connect(fr'{gv.db_path}\database.db')
         self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
         self.sqlite_create_db()
@@ -21,17 +21,9 @@ class Database(object):
         self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS settings(
-                key TEXT NOT NULL PRIMARY KEY,
-                value NOT NULL
-            ) 
-            """)
-
-        # Команды для другого приложения
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS settings(
-                key TEXT NOT NULL PRIMARY KEY,
-                value NOT NULL
+                key TEXT NOT NULL PRIMARY KEY ON CONFLICT REPLACE,
+                value NOT NULL,
+                type TEXT NOT NULL
             ) 
             """)
 
@@ -61,18 +53,19 @@ class Database(object):
         #     """)
         pass
 
-    def test(self):
+    def save_settings(self, values):
+
         self.cur.execute(
-            """
+            f"""
             INSERT INTO
                 settings
             VALUES
-                ("test", 1)
-            ON CONFLICT(key) DO UPDATE SET value = value + 1
-            """)
+                {','.join(map(str, values))}
+            """
+        )
         self.commit()
 
-    def test_read(self):
+    def get_settings(self):
         self.cur.execute(
             """
             SELECT 
@@ -81,4 +74,4 @@ class Database(object):
                 settings
             """)
 
-        return self.cur.fetchone()[1]
+        return self.cur.fetchall()

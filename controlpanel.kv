@@ -1,6 +1,8 @@
 #: import AlignedTextInput allignedtextinput.AlignedTextInput
 #: import datetime datetime.datetime
 #: import Snackbar kivymd.uix.snackbar.Snackbar
+#: import ActionTab action_tab.ActionTab
+#: import SettingTab setting_tab.SettingTab
 
 <MainScreen>
     orientation: "vertical"
@@ -10,110 +12,44 @@
         height: '48dp'
         md_bg_color: app.theme_cls.primary_dark
         MDIconButton:
-            icon: "alpha-b-box-outline" if app.type == "B" else "alpha-s-box-outline"
+            icon: app._type_options[app.type]
             theme_text_color: "ContrastParentBackground"
             on_release: app.change_type()
         MDLabel:
             text: app.status
             theme_text_color: "ContrastParentBackground"
         MDLabel:
-            size_hint_x: .1
+            size_hint_x: None
             text: "{}".format(datetime.utcfromtimestamp(app.timer).strftime('%H:%M:%S'))
             theme_text_color: "Custom"
             text_color: (0,0,0,.8)
+            width: '64dp'
         MDIconButton:
             icon: "play"
             theme_text_color: "Custom"
             text_color: (0,0,0,.5) if app.running else (0,0,0,1)
-            on_release: app.main.fuckin_good_start() if not app.fuckin_good_completed else app.start_stop(True)
+            on_release: root.first_run_animation_start() if not app.first_run_animation_completed else root.start_stop(True)
         MDIconButton:
             icon: "coffee"
             theme_text_color: "Custom"
             text_color: (0,0,0,1) if app.running else (0,0,0,.5)
-            on_release: app.start_stop(False)
-
+            on_release: root.start_stop(False)
 
     MDTabs:
         id: tabs
         tab_indicator_anim: True
         lock_swiping: True
+        on_tab_switch: root.on_tab_switch(*args)
 
         Tab:
-            spacing: '8dp'
-            padding: ['8dp', 0, '8dp', '8dp']
+            padding: [0, 0]
             title: "Действия"
-            MDBoxLayout:
-                padding: [0, '8dp', 0, 0]
-                RecycleView:
-                    data: app.actions
-                    scroll_type: ['bars', 'content']
-
-                    viewclass: 'ActionBox'
-                    RecycleBoxLayout:
-                        id: actions_parent
-                        default_size: None, '72dp'
-                        default_size_hint: 1, None
-                        height: self.minimum_height
-                        orientation: 'vertical'
-                        size_hint_y: None
-                        spacing: '8dp'
-            MDBoxLayout:
-                orientation: 'vertical'
-                spacing: '8dp'
-                MDCard:
-                    id: stages_box
-                    opacity: 0 if not app.fuckin_good_completed else 1  # Для стартового ништяка
-                    orientation: 'vertical'
-                    radius: [0, 0, 6, 6]
-                    RecycleView:
-                        id: stages_rv
-                        data: app.current_action.stages if app.current_action else []
-                        scroll_type: ['bars', 'content']
-                        viewclass: 'OneLineQueue'
-                        RecycleBoxLayout:
-                            id: stages_parent
-                            default_size: None, '48dp'
-                            default_size_hint: 1, None
-                            height: self.minimum_height
-                            orientation: 'vertical'
-                            size_hint_y: None
-                            spacing: '8dp'
-#                    OneLineQueue:
-#                        divider_color: app.theme_cls.primary_dark
-#                        height: '48dp'
-#                        left_widget_source: "images/test/1.png"
-#                        text: "x12 [Ник чела0]"
-#                    RecycleView:
-#                        data: root.deal_queue
-#                        scroll_type: ['bars', 'content']
-#                        viewclass: 'OneLineQueue'
-#                        RecycleBoxLayout:
-#                            id: deal_queue_parent
-#                            default_size: None, '48dp'
-#                            default_size_hint: 1, None
-#                            height: self.minimum_height
-#                            orientation: 'vertical'
-#                            size_hint_y: None
-#                            spacing: '8dp'
-                MDRectangleFlatIconButton:
-                    id: button_queue
-                    opacity: 0 if not app.fuckin_good_completed else 1 # Для стартового ништяка
-                    on_release: Snackbar(text="Еще не работает:)").open()
-                    icon: 'human-queue' if app.type == "S" else 'format-list-numbered'
-                    text: "Очередь сделок"
-                    size_hint_x: 1
-                MDRectangleFlatIconButton:
-                    id: button_blacklist
-                    opacity: 0 if not app.fuckin_good_completed else 1 # Для стартового ништяка
-                    on_release: Snackbar(text="Еще не работает:)").open()
-                    icon: 'playlist-remove'
-                    text: "Черный список"
-                    size_hint_x: 1
-
-        Tab:
-            title: "Предметы"
-            orientation: 'vertical'
-            spacing: '5dp'
+            ActionTab:
+                id: action_tab
+#        Tab:
+#            title: "Предметы"
+#            orientation: 'vertical'
+#            spacing: '5dp'
 #            MDBoxLayout:
 #                size_hint_y: None
 #                height: "50dp"
@@ -265,89 +201,10 @@
 
         Tab:
             title: "Настройки"
-            orientation: "vertical"
-            spacing: "5dp"
-
-            MDStackLayout:
-                SettingRow:
-                    text: "Это исполнитель"
-                    MDCheckbox:
-                        id: setting_checkbox_is_executor
-                        size_hint_x: .45
-                        on_state: app._set_is_executor(*args)
-                SettingRow:
-                    text: "Разрешение окна"
-                    MDDropDownItem:
-                        id: setting_checkbox_window_resolution
-                        size_hint_x: .45
-                        text: 'Item'
-                        on_release: self.open()
-#                        on_state: app._set_is_executor(*args)
-                SettingRow:
-                    text: "Сколько работать от-до (в сек)"
-                    MDTextField:
-                        id: setting_textfield_working_from
-                        size_hint_x: .2
-                        theme_text_color: app.theme_cls.text_color
-                    Widget:
-                        size_hint_x: .05
-                    MDTextField:
-                        id: setting_textfield_working_to
-                        size_hint_x: .2
-                        text_color: app.theme_cls.text_color
-                SettingRow:
-                    text: "Сколько перерыв от-до (в сек)"
-                    MDTextField:
-                        id: setting_textfield_pause_from
-                        size_hint_x: .2
-                        text_color: app.theme_cls.text_color
-                    Widget:
-                        size_hint_x: .05
-                    MDTextField:
-                        id: setting_textfield_pause_to
-                        size_hint_x: .2
-                        text_color: app.theme_cls.text_color
-
-
-<OneLineQueue@OneLineIconListItem>
-    divider: "Inset"
-    divider_color:
-        app.theme_cls.primary_dark if root.status == 'progress' or root.status == 'error' else (.2, .2, .2, .8)
-    IconLeftWidget:
-        icon: root.widgets[root.status]
-        theme_text_color: "Custom"
-        text_color:
-            app.theme_cls.primary_dark if root.status == 'progress' or root.status == 'error' \
-            else app.theme_cls.text_color
+            SettingTab:
 
 <Tab@MDBoxLayout+MDTabsBase>
     padding: "5dp"
-
-<ActionBox>
-    padding: ["6dp", "6dp"]
-    elevation: 12
-    opacity:
-        0 if not app.fuckin_good_completed else \
-        (self._min_opacity if ((self.only_before_pause and not app.need_pause) \
-        or (self.only_start_over and (self.completed or not app.start_over))) \
-        else self._max_opacity)
-    style: "outlined"
-    line_color: app.theme_cls.primary_dark if root.active else (.2, .2, .2, .8)
-    MDBoxLayout:
-        orientation: 'vertical'
-        MDLabel:
-            text: root.name
-#        MDLabel:
-#            text: ""
-    MDLabel:
-        text: "{}".format(datetime.utcfromtimestamp(root.timer).strftime('%M:%S'))
-        size_hint_x: .15
-    MDIconButton:
-        icon: 'stop' if root.active else 'play'
-        theme_text_color: "Custom"
-        text_color: app.theme_cls.primary_dark if root.active else app.theme_cls.text_color
-        on_press: root.play_pause(not root.active)
-        pos_hint: {"center_x": 1, "center_y": .5}
 
 
 <ItemBox>
@@ -434,11 +291,3 @@
     multiline: False
     valign: 'middle'
     halign: 'center'
-
-<SettingRow@MDBoxLayout>:
-    height: '48dp'
-    size_hint_y: None
-    text: ""
-    padding: ["5dp", 0]
-    MDLabel:
-        text: root.text

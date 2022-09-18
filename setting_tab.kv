@@ -1,0 +1,133 @@
+<SettingTab>
+    spacing: '8dp'
+    MDGridLayout:
+        id: settings_list
+        cols: 2
+        height: self.minimum_height
+        spacing: '5dp'
+        size_hint_y: None
+        SettingRow:
+            id: setting_checkbox_is_executor
+            text: "Это исполнитель"
+            type: "bool"
+            MDBoxLayout:
+                size_hint_x: .45
+                Widget:
+                MDCheckbox:
+                    active:
+                        setting_checkbox_is_executor.value if setting_checkbox_is_executor.value is not None else False
+                    on_active: setting_checkbox_is_executor.set_value(self.active)
+                    size_hint_x: None
+                    width: self.height
+        SettingRow:
+            id: setting_checkbox_window_resolution
+            text: "Разрешение окна"
+            type: "str"
+            value: "win10_windowed_800x600"
+            MDDropDownItem:
+                size_hint_x: .45
+        SettingRow:
+            id: setting_textfield_hotkey_pause
+            text: "Пауза (будет ждать завершения всех действий)"
+            type: "str"
+            MDTextField:
+                size_hint_x: .45
+                text:
+                    setting_textfield_hotkey_pause.value if setting_textfield_hotkey_pause.value is not None else ""
+                on_text: setting_textfield_hotkey_pause.set_value(self.text)
+        SettingRow:
+            id: setting_textfield_hotkey_stop_action
+            text: "Остановка текущего действия"
+            type: "str"
+            MDTextField:
+                size_hint_x: .45
+                text:
+                    setting_textfield_hotkey_stop_action.value \
+                    if setting_textfield_hotkey_stop_action.value is not None else ""
+                on_text: setting_textfield_hotkey_stop_action.set_value(self.text)
+        SettingRow:
+            id: setting_textfield_hotkey_close_after_actions
+            text: "Завершение программы (будет ждать завершения всех действий)"
+            type: "str"
+            MDTextField:
+                size_hint_x: .45
+                text:
+                    setting_textfield_hotkey_close_after_actions.value \
+                    if setting_textfield_hotkey_close_after_actions.value is not None else ""
+                on_text: setting_textfield_hotkey_close_after_actions.set_value(self.text)
+        SettingRow:
+            id: setting_textfield_hotkey_close
+            text: "Мгновенное завершение программы"
+            type: "str"
+            MDTextField:
+                size_hint_x: .45
+                text:
+                    setting_textfield_hotkey_close.value if setting_textfield_hotkey_close.value is not None else ""
+                on_text: setting_textfield_hotkey_close.set_value(self.text)
+        SettingRow:
+            id: setting_textfield_working
+            text: "Сколько работать от-до (в сек)"
+            type: "list"
+            MDTextField:
+                size_hint_x: .2
+                text: setting_textfield_working.value[0] if setting_textfield_working.value is not None else ""
+                on_text:
+                    setting_textfield_working.set_value([self.text, \
+                    setting_textfield_working.value[1] if setting_textfield_working.value is not None else ""])
+            Widget:
+                size_hint_x: .05
+            MDTextField:
+                size_hint_x: .2
+                text: setting_textfield_working.value[1] if setting_textfield_working.value is not None else ""
+                on_text:
+                    setting_textfield_working.set_value([setting_textfield_working.value[0] \
+                    if setting_textfield_working.value is not None else "", self.text])
+        SettingRow:
+            id: setting_textfield_pause
+            text: "Сколько перерыв от-до (в сек)"
+            type: "list"
+            MDTextField:
+                size_hint_x: .2
+                text: setting_textfield_pause.value[0] if setting_textfield_pause.value is not None else ""
+                on_text:
+                    setting_textfield_pause.set_value([self.text, \
+                    setting_textfield_pause.value[1] if setting_textfield_pause.value is not None else ""])
+            Widget:
+                size_hint_x: .05
+            MDTextField:
+                size_hint_x: .2
+                text: setting_textfield_pause.value[1] if setting_textfield_pause.value is not None else ""
+                on_text:
+                    setting_textfield_pause.set_value([setting_textfield_pause.value[0] \
+                    if setting_textfield_pause.value is not None else "", self.text])
+    MDGridLayout:
+        cols: 2
+        height: self.minimum_height
+        spacing: '5dp'
+        MDRectangleFlatIconButton:
+            on_release: root.refresh_settings()
+            icon: 'refresh'
+            size_hint_x: 1
+            text: "Обновить из БД"
+        MDRectangleFlatIconButton:
+            on_release: root.save_settings()
+            icon: 'content-save-settings-outline'
+            size_hint_x: 1
+            text: "Сохранить"
+        MDRectangleFlatIconButton:
+            on_release: root.open_template_settings()
+            icon: 'ticket-confirmation-outline'
+            pos_hint: {'center_x': .5, 'center_y': .5}
+            size_hint_x: 1
+            text: "Открыть настройку шаблонов"
+
+
+<SettingRow>:
+    md_bg_color: app.theme_cls.bg_dark
+    height: '56dp'
+    size_hint_y: None
+    text: ""
+    padding: ["5dp", 0]
+    MDLabel:
+        size_hint_x: .55
+        text: root.text
