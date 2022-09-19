@@ -21,9 +21,11 @@ class Database(object):
         self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS settings(
-                key TEXT NOT NULL PRIMARY KEY ON CONFLICT REPLACE,
+                app_type NOT NULL,
+                key TEXT NOT NULL,
                 value NOT NULL,
-                type TEXT NOT NULL
+                type TEXT NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (app_type, key) ON CONFLICT REPLACE
             ) 
             """)
 
@@ -33,7 +35,19 @@ class Database(object):
             CREATE TABLE IF NOT EXISTS limited_values(
                 key TEXT NOT NULL,
                 value NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (key, value)
+                CONSTRAINT pk PRIMARY KEY (key, value) ON CONFLICT REPLACE
+            ) 
+            """)
+
+        # Настройки шаблонов
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS template_settings(
+                app_type NOT NULL,
+                key TEXT NOT NULL,
+                value NOT NULL,
+                type TEXT NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (app_type, key) ON CONFLICT REPLACE
             ) 
             """)
 
@@ -65,13 +79,85 @@ class Database(object):
         )
         self.commit()
 
-    def get_settings(self):
+    def save_template_settings(self, values):
+
+        app_type = values[0][0]
+
         self.cur.execute(
+            f"""
+            DELETE FROM
+                template_settings
+            WHERE
+                app_type = "{app_type}"
             """
+        )
+        self.cur.execute(
+            f"""
+            INSERT INTO
+                template_settings
+            VALUES
+                {','.join(map(str, values))}
+            """
+        )
+        self.commit()
+
+    def get_settings(self, app_type):
+        self.cur.execute(
+            f"""
             SELECT 
                 *
             FROM
                 settings
+            WHERE
+                app_type = "{app_type}"
             """)
 
         return self.cur.fetchall()
+
+    def get_template_settings(self, app_type):
+        self.cur.execute(
+            f"""
+            SELECT 
+                *
+            FROM
+                template_settings
+            WHERE
+                app_type = "{app_type}"
+            """)
+
+        return self.cur.fetchall()
+
+    def get_selection(self, selection):
+        self.cur.execute(
+            f"""
+            SELECT 
+                value
+            FROM
+                limited_values
+            WHERE
+               key = "{selection}"
+            """)
+
+        return [row['value'] for row in self.cur.fetchall()]
+
+    def add_selection_value(self, selection, value):
+        self.cur.execute(
+            f"""
+            INSERT INTO
+                limited_values
+            VALUES
+                {selection, value}
+            """
+        )
+        self.commit()
+
+    def delete_selection_value(self, selection, value):
+        self.cur.execute(
+            f"""
+            DELETE FROM
+                limited_values
+            WHERE
+                key = "{selection}" and value = "{value}"
+            """
+        )
+        self.commit()

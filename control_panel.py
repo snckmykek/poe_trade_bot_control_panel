@@ -66,9 +66,6 @@ class ControlPanelApp(MDApp):
     def __init__(self, **kwargs):
         self.action_thread = threading.Thread(target=lambda *_: actions.do_current_action(), daemon=True)
 
-        if not self.init_config():
-            return
-
         # Clock.schedule_interval(lambda *_: self.update_data(), 1)
         self._update_timer(True, False)
 
@@ -100,6 +97,9 @@ class ControlPanelApp(MDApp):
         self.main.ids.action_tab.do_next_action(go_to)
 
     def on_start(self):
+        if not self.init_config():
+            return
+
         global app
         app = MDApp.get_running_app()
 
@@ -111,10 +111,10 @@ class ControlPanelApp(MDApp):
         try:
             gv.upload_config()
             return True
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
             error_message = textwrap.dedent(f"""\
-                Не найдена БД с именем database.db в папке: {gv.db_path}.
-                Изменить путь можно в файле config.ini в папке программы.
+                Ошибка при подключении или создании БД:
+                {e}
                 Сейчас программа будет закрыта""")
         except FileNotFoundError:
             error_message = textwrap.dedent("""\

@@ -1,3 +1,5 @@
+#: import Window kivy.core.window.Window
+
 <SettingTab>
     spacing: '8dp'
     MDGridLayout:
@@ -21,11 +23,14 @@
                     width: self.height
         SettingRow:
             id: setting_checkbox_window_resolution
+            selection: "screen_resolution"
             text: "Разрешение окна"
             type: "str"
             value: "win10_windowed_800x600"
             MDDropDownItem:
                 size_hint_x: .45
+                text: setting_checkbox_window_resolution.value
+                on_release: setting_checkbox_window_resolution.open_selection(self)
         SettingRow:
             id: setting_textfield_hotkey_pause
             text: "Пауза (будет ждать завершения всех действий)"
@@ -131,3 +136,34 @@
     MDLabel:
         size_hint_x: .55
         text: root.text
+
+
+<SelectionItem>:
+    IconLeftWidget:
+        icon: root.icon
+        text: root.text
+        on_release: root.icon_func(root.text)
+
+
+<TemplateBox>:
+    size_hint_y: None
+    height: templates.height if templates.height < Window.height * 0.7 else Window.height * 0.7
+    MDBoxLayout:
+        id: templates
+        orientation: 'vertical'
+        size_hint_y: None
+        height: self.minimum_height
+
+
+<TemplateRow>:
+    height: '56dp'
+    size_hint_y: None
+    MDTextField:
+        id: tf
+        hint_text: root.hint_text
+        icon_right: root.icon_right
+        text: root.text
+        on_text: root.set_value(self.text)
+    MDIconButton:
+        icon: root.icon
+        on_release: root.icon_func(root)
