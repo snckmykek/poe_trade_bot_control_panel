@@ -28,7 +28,8 @@
             icon: "play"
             theme_text_color: "Custom"
             text_color: (0,0,0,.5) if app.running else (0,0,0,1)
-            on_release: root.first_run_animation_start() if not app.first_run_animation_completed else root.start_stop(True)
+            on_release:
+                root.first_run_animation_start() if not app.first_run_animation_completed else root.start_stop(True)
         MDIconButton:
             icon: "coffee"
             theme_text_color: "Custom"

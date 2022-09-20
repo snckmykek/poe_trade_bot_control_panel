@@ -1,12 +1,17 @@
+import os.path
 import threading
 import time
 import cv2
+import keyboard as keyboard
 import pyautogui
 import numpy as np
 import pywintypes
 import win32gui
+from win32api import GetSystemMetrics
 from kivy.clock import Clock
 from kivymd.app import MDApp
+
+import gv
 
 
 def do_current_action():
@@ -16,10 +21,8 @@ def do_current_action():
 
     for stage in current_action.stages:
         if need_stop_action():
-            if not app.current_action.timer:  # Отвалился по таймингу
-                # Можно прописать, что делать, когда тайминг действия закончился. Сейчас - начинаем заново
+            if not app.current_action.timer and app.current_action.have_timer:  # Отвалился по таймингу
                 current_action.func_timer_over()
-                # app.main.do_next_action(0)
             return
 
         Clock.schedule_once(lambda *_: action_tab.report_current_stage(stage['index']))
@@ -50,30 +53,74 @@ def need_stop_action():
 # region Вход
 
 def start_poe():
-    time.sleep(2)
-    return
 
-    pyautogui.screenshot(f"images/screenshots/_desktop.png", )
-    img_rgb = cv2.imread(f"images/screenshots/_desktop.png")
-    img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
-    template = cv2.imread(f"images/templates/poe.png", 0)
-    res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
-    if res.max() >= 0.70:
-        _, _, _, coord = cv2.minMaxLoc(res)
+    time.sleep(1.5)
+
+    variables = MDApp.get_running_app().action_variables
+
+    xywh = find_by_template([0, 0, GetSystemMetrics(0), GetSystemMetrics(1)], variables['poe_icon'])
+    if not xywh:
+        return "Не найден ярлык ПОЕ на основном экране"
     else:
-        return "Не найден ярлык ПОЕ на экране"
+        x, y, w, h = xywh
 
-    pyautogui.moveTo(coord)
+    pyautogui.moveTo(x + w/2, y + h/2)
     pyautogui.click(clicks=2)
-    time.sleep(.5)
+
+    # Ждем, пока нормально запустится ПОЕ (при запуске окно перемещается микросекунду)
+    window_name = "Path of Exile"
+    window_xywh = None
+    while True:
+        if need_stop_action():
+            return f"Не запущено окно с именем {window_name}"
+        time.sleep(.1)
+
+        _window_xywh = get_window_coord(window_name)
+        # Только когда в одном и том же месте окно находится - всё ок
+        if _window_xywh and window_xywh == _window_xywh:
+            # Выводим на передний план окно (но расположение слетает в 0,0)
+            hwnd = win32gui.FindWindow(None, window_name)
+            win32gui.SetForegroundWindow(hwnd)
+            return
+        else:
+            window_xywh = _window_xywh
 
 
 def authorization():
-    time.sleep(2)
+    variables = MDApp.get_running_app().action_variables
+
+    window_name = "Path of Exile"
+    window_xywh = get_window_coord(window_name)
+    if not window_xywh:
+        return f"Не запущено окно с именем {window_name}"
+
+    template = variables['template_email']
+    if not click_to_template(window_xywh, template, offset_x=2):
+        return f"Не найден шаблон {template} на экране в области окна ПОЕ"
+    keyboard.write(variables['login'], delay=0)
+
+    template = variables['template_password']
+    if not click_to_template(window_xywh, template, offset_x=2):
+        return f"Не найден шаблон {template} на экране в области окна ПОЕ"
+    keyboard.write(variables['password'], delay=0)
+
+    template = variables['template_login']
+    if not click_to_template(window_xywh, template):
+        return f"Не найден шаблон {template} на экране в области окна ПОЕ"
+    keyboard.write(variables['password'], delay=0)
 
 
 def choice_character():
-    time.sleep(2)
+    variables = MDApp.get_running_app().action_variables
+
+    window_name = "Path of Exile"
+    window_xywh = get_window_coord(window_name)
+    if not window_xywh:
+        return f"Не запущено окно с именем {window_name}"
+
+    template = variables['template_character']
+    if not click_to_template(window_xywh, template, clicks=2):
+        return f"Не найден шаблон {template} на экране в области окна ПОЕ"
 
 
 # endregion
@@ -148,41 +195,50 @@ def test():
 
 # region Общие функции
 
+def click_to_template(region, template, offset_x=.5, offset_y=.5, clicks=1):
+    xywh = None
+    while not xywh:
+        xywh = find_by_template(region, template)
+        if need_stop_action():
+            return False
+    x, y, w, h = xywh
+
+    pyautogui.moveTo(to_global(region, [x + w * offset_x, y + h * offset_y]))
+    pyautogui.click(clicks=clicks)
+    time.sleep(.1)
+
+    return True
+
+
+# Перевести координаты из относительных окна приложения в абсолютные (относительно левого верхнего угла экрана)
+def to_global(window_coords, coords):
+    return [window_coords[0] + coords[0], window_coords[1] + coords[1]]
+
+
 # Найти по шаблону
-def find_by_template(region, template, accuracy=.8, file_to_save=""):
+def find_by_template(region, template_path, accuracy=.8, file_to_save=""):
     """
-    :param region: В долях единицы
-    :param template: Имя файла, будет использоваться такой путь: images/templates/{template}.png
+    :param region: Область скриншота
+    :param template_path: Часть пути до файла, будет использоваться такой путь: images/templates/{template_path}
     :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.7 - 0.9
-    :param file_to_save: Если указать им файла, будет сохранен по пути images/screenshots/{file_to_save}.png
-    :return:
+    :param file_to_save: Если указать имя файла, будет сохранен по пути images/screenshots/{file_to_save}.png
+    :return: [x, y, w, h] (x,y - левый верхний угол совпадения шаблона, w,h - ширина и высота шаблона)
     """
-    img_rgb = pyautogui.screenshot(file_to_save, region)
+
+    if file_to_save:
+        img_rgb = pyautogui.screenshot(f"images/screenshots/{file_to_save}.png", region=region)
+    else:
+        img_rgb = pyautogui.screenshot(region=region)
     img_bgr = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2BGR)
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    template = cv2.imread(f"images/templates/poe.png", 0)
+    template = cv2.imread(f"images/templates/{template_path}", 0)
     res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
-    if res.max() >= 0.70:
+    if res.max() >= accuracy:
         _, _, _, coord = cv2.minMaxLoc(res)
     else:
-        return "Не найден ярлык ПОЕ на экране"
+        return
 
-    pyautogui.moveTo(coord)
-    pyautogui.click(clicks=2)
-    time.sleep(.5)
-
-
-#  region_to_pixels
-def rtp(region):
-    """
-    Получает координаты (region) в долях единицы, возвращает в пикселях относительно разрешения экрана и положения окна.
-    :param region: [x, y] в долях единицы от верхнего левого угла окна приложения. Например [.323, .761]
-    :return: [x, y] в пикселях, например [620, 822] для значения [.323, .761] и экрана 1920x1080.
-    Если окно приложения находится в правой нижней части экрана, например левый верхний угол окна в точке (1000, 500),
-    а сам размер окна 920x580, то вернется [1297, 941], то есть [1000 + .323 * 920, 500 + .761 * 580]
-    """
-    x, y, w, h = get_window_coord("Path of Exile")
-    return [x + region[0] * w, y + region[1] * h]
+    return [*coord, template.shape[1], template.shape[0]]
 
 
 def get_window_coord(window_name):
@@ -196,7 +252,8 @@ def get_window_coord(window_name):
     try:
         rect = win32gui.GetWindowRect(hwnd)
     except pywintypes.error:
-        return f"Не запущено приложение {window_name}"
+        return
+
     x = rect[0]
     y = rect[1]
     w = rect[2] - x

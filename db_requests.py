@@ -39,15 +39,16 @@ class Database(object):
             ) 
             """)
 
-        # Настройки шаблонов
+        # Переменные для Действий
         self.cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS template_settings(
+            CREATE TABLE IF NOT EXISTS action_variables(
                 app_type NOT NULL,
+                window_resolution NOT NULL,
                 key TEXT NOT NULL,
                 value NOT NULL,
                 type TEXT NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (app_type, key) ON CONFLICT REPLACE
+                CONSTRAINT pk PRIMARY KEY (app_type, window_resolution, key) ON CONFLICT REPLACE
             ) 
             """)
 
@@ -79,50 +80,91 @@ class Database(object):
         )
         self.commit()
 
-    def save_template_settings(self, values):
+    def save_action_variables(self, values):
 
         app_type = values[0][0]
 
         self.cur.execute(
             f"""
             DELETE FROM
-                template_settings
+                action_variables
             WHERE
                 app_type = "{app_type}"
+                and window_resolution in (SELECT 
+                                            value
+                                          FROM 
+                                            settings
+                                          WHERE 
+                                            app_type = "{app_type}" and key = "setting_checkbox_window_resolution")
             """
         )
         self.cur.execute(
             f"""
             INSERT INTO
-                template_settings
+                action_variables
             VALUES
                 {','.join(map(str, values))}
             """
         )
         self.commit()
 
-    def get_settings(self, app_type):
-        self.cur.execute(
-            f"""
-            SELECT 
-                *
-            FROM
-                settings
-            WHERE
-                app_type = "{app_type}"
-            """)
+    def get_settings(self, app_type, keys=None):
+
+        if isinstance(keys, str):
+            key = keys
+        elif len(keys) == 1:
+            key = keys[0]
+        else:
+            key = None
+
+        if key:
+            self.cur.execute(
+                f"""
+                SELECT 
+                    *
+                FROM
+                    settings
+                WHERE
+                    app_type = "{app_type}" and key = "{key}"
+                """)
+        elif keys:
+            self.cur.execute(
+                f"""
+                SELECT 
+                    *
+                FROM
+                    settings
+                WHERE
+                    app_type = "{app_type}" and key in {keys}
+                """)
+        else:
+            self.cur.execute(
+                f"""
+                SELECT 
+                    *
+                FROM
+                    settings
+                WHERE
+                    app_type = "{app_type}"
+                """)
 
         return self.cur.fetchall()
 
-    def get_template_settings(self, app_type):
+    def get_action_variables(self, app_type):
         self.cur.execute(
             f"""
             SELECT 
                 *
             FROM
-                template_settings
+                action_variables
             WHERE
                 app_type = "{app_type}"
+                and window_resolution in (SELECT 
+                                            value
+                                          FROM 
+                                            settings
+                                          WHERE 
+                                            app_type = "{app_type}" and key = "setting_checkbox_window_resolution")
             """)
 
         return self.cur.fetchall()

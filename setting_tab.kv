@@ -120,7 +120,7 @@
             size_hint_x: 1
             text: "Сохранить"
         MDRectangleFlatIconButton:
-            on_release: root.open_template_settings()
+            on_release: root.open_action_variables()
             icon: 'ticket-confirmation-outline'
             pos_hint: {'center_x': .5, 'center_y': .5}
             size_hint_x: 1
@@ -145,25 +145,46 @@
         on_release: root.icon_func(root.text)
 
 
-<TemplateBox>:
+<VariablesBox>:
+    orientation: 'vertical'
     size_hint_y: None
-    height: templates.height if templates.height < Window.height * 0.7 else Window.height * 0.7
+    height:
+        (variables.height + top_box.height) if (variables.height + top_box.height) < Window.height * 0.7 \
+        else Window.height * 0.7
     MDBoxLayout:
-        id: templates
-        orientation: 'vertical'
+        id: top_box
         size_hint_y: None
-        height: self.minimum_height
+        height: '56dp'
+        MDTextField:
+            id: exe_name
+            hint_text: "Название окна приложения"
+        MDTextField:
+            id: screenshot_delay
+            hint_text: "Задержка перед скриншотом"
+    MDScrollView:
+        MDBoxLayout:
+            id: variables
+            orientation: 'vertical'
+            size_hint_y: None
+            height: self.minimum_height
 
 
-<TemplateRow>:
+<VariablesRow>:
     height: '56dp'
+    icon: "trash-can"
+    icons_right:
+        {'region': 'vector-square-edit',
+        'coord': 'vector-point-edit',
+        'template': 'image-edit-outline',
+        'text': 'credit-card-edit-outline'}
     size_hint_y: None
     MDTextField:
         id: tf
         hint_text: root.hint_text
-        icon_right: root.icon_right
+        icon_right: root.icons_right[root.type] if root.icons_right and root.type else ''
         text: root.text
         on_text: root.set_value(self.text)
     MDIconButton:
         icon: root.icon
         on_release: root.icon_func(root)
+        pos_hint: {'center_x': .5, 'center_y': .6}

@@ -5,8 +5,6 @@
 """
 
 # Настройки окна, должны быть до импорта графических объектов
-import json
-
 from kivy.config import Config
 
 Config.set('graphics', 'resizable', '1')
@@ -15,6 +13,8 @@ Config.set('graphics', 'height', '600')
 
 # Общие
 from datetime import datetime
+import json
+import random
 import sqlite3
 import textwrap
 import threading
@@ -57,18 +57,14 @@ class ControlPanelApp(MDApp):
     main = None
     need_pause = BooleanProperty(False)
     need_stop_action = BooleanProperty(False)
-    type = OptionProperty(_types[0], options=_types)
-    timer = NumericProperty(0)
     start_over = BooleanProperty(True)
     status = StringProperty("Я родился")
     running = BooleanProperty(False)
+    action_variables: dict = dict()
+    type = OptionProperty(_types[0], options=_types)
+    timer = NumericProperty(0)
 
     def __init__(self, **kwargs):
-        self.action_thread = threading.Thread(target=lambda *_: actions.do_current_action(), daemon=True)
-
-        # Clock.schedule_interval(lambda *_: self.update_data(), 1)
-        self._update_timer(True, False)
-
         super(ControlPanelApp, self).__init__(**kwargs)
 
     def build(self):
@@ -90,22 +86,25 @@ class ControlPanelApp(MDApp):
 
         self.main.upload_buttons()
         self.main.ids.action_tab.fill_default_stages()
+        self.update_action_variables()
 
     @mainthread
     def do_next_action(self, go_to=None):
-        self.action_thread = threading.Thread(target=lambda *_: actions.do_current_action(), daemon=True)
         self.main.ids.action_tab.do_next_action(go_to)
 
     def on_start(self):
         if not self.init_config():
             return
 
+        super(ControlPanelApp, self).on_start()
+
         global app
         app = MDApp.get_running_app()
 
+        self._update_timer(True, False)
         self.upload_actions()
         self.main.upload_buttons()
-        super(ControlPanelApp, self).on_start()
+        self.update_action_variables()
 
     def init_config(self):
         try:
@@ -169,6 +168,17 @@ class ControlPanelApp(MDApp):
         self.actions = _actions
         self.main.ids.action_tab.fill_default_stages()
 
+    def update_action_variables(self):
+        def _value(row):
+            if row['type'] == 'template':
+                return f"{row['window_resolution']}/{row['value']}"
+            elif row['type'] == 'region' or row['type'] == 'coord':
+                return list(map(int, row['value'].split(", ")))
+            else:
+                return row['value']
+
+        self.action_variables = {row['key']: _value(row) for row in gv.db.get_action_variables(app.type)}
+
     def set_status(self, status, append_current_action=False, append_current_stage=False):
         if append_current_stage:
             status = f"[{self.current_stage.text}] " + status
@@ -176,6 +186,7 @@ class ControlPanelApp(MDApp):
             status = f"[{self.current_action.name}] " + status
         self.status = status
 
+    @mainthread
     def set_running(self, value, start_over=False):
         if self.running == value:
             return
@@ -204,6 +215,7 @@ class ControlPanelApp(MDApp):
             self.start_over = True
 
     def update_current_action(self, action):
+        self.action_thread = threading.Thread(target=lambda *_: actions.do_current_action(), daemon=True)
         self.current_action = action
 
     def update_current_stage(self, stage):
@@ -212,15 +224,18 @@ class ControlPanelApp(MDApp):
     def _update_timer(self, for_work, need_start=True):
         if self._anim_timer:
             self._anim_timer.cancel(self)
-        self.timer = 13 if for_work else 10
+
+        if for_work:
+            setting_timer = gv.db.get_settings(app.type, "setting_textfield_working")
+        else:
+            setting_timer = gv.db.get_settings(app.type, "setting_textfield_pause")
+        _timer = random.randint(*map(int, setting_timer[0]['value'].split(",")))
+
+        self.timer = _timer
         self._anim_timer = Animation(timer=0, d=self.timer)
         self._anim_timer.bind(on_complete=self._on_complete_timer)
         if need_start:
             self._anim_timer.start(self)
-
-    def update_data(self):
-        # stopped, status?
-        pass
 
     def _set_is_executor(self, checkbox, value):
         self.is_executor = value
