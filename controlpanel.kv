@@ -4,6 +4,7 @@
 #: import ActionTab action_tab.ActionTab
 #: import SettingTab setting_tab.SettingTab
 
+
 <MainScreen>
     orientation: "vertical"
 
@@ -12,7 +13,7 @@
         height: '48dp'
         md_bg_color: app.theme_cls.primary_dark
         MDIconButton:
-            icon: app._type_options[app.type]
+            icon: app.type_options[app.type]['icon']
             theme_text_color: "ContrastParentBackground"
             on_release: app.change_type()
         MDLabel:
@@ -47,51 +48,6 @@
             title: "Действия"
             ActionTab:
                 id: action_tab
-#        Tab:
-#            title: "Предметы"
-#            orientation: 'vertical'
-#            spacing: '5dp'
-#            MDBoxLayout:
-#                size_hint_y: None
-#                height: "50dp"
-#                MDCheckbox:
-#                    size_hint_x: .05
-#                    on_active: root.set_use_all_items(self.active)
-#                MDLabel:
-#                    size_hint_x: .5
-#                    text: "Предмет"
-#                MDLabel:
-#                    size_hint_x: .2
-#                    text: "Макс цена"
-#                MDLabel:
-#                    size_hint_x: .2
-#                    text: "Балк цена"
-#                MDLabel:
-#                    size_hint_x: .15
-#                    text: "Количество"
-#            RecycleView:
-#                id: items_box
-#                scroll_type: ['bars', 'content']
-#                viewclass: 'ItemBox'
-#                RecycleBoxLayout:
-#                    default_size: None, dp(48)
-#                    default_size_hint: 1, None
-#                    size_hint_y: None
-#                    height: self.minimum_height
-#                    orientation: 'vertical'
-#            MDBoxLayout:
-#                adaptive_height: True
-#                size_hint_y: None
-#                spacing: "5dp"
-#                Widget:
-#                MDRectangleFlatIconButton:
-#                    text: "Обновить из БД"
-#                    icon: "refresh"
-#                    on_release: root.refresh_items()
-#
-#                MDRectangleFlatIconButton:
-#                    text: "Сохранить"
-#                    icon: "content-save"
 
         Tab:
             title: "Логи"
@@ -208,35 +164,6 @@
     padding: "5dp"
 
 
-<ItemBox>
-    size_hint_y: None
-    height: "50dp"
-    MDCheckbox:
-        size_hint_x: .05
-        id: use
-        active: root.use
-    MDTextField:
-        size_hint_x: .5
-        id: name
-        text: root.name
-        text_color: app.theme_cls.text_color
-    MDTextField:
-        size_hint_x: .2
-        id: max_price
-        text: str(root.max_price)
-        text_color: app.theme_cls.text_color
-    MDTextField:
-        size_hint_x: .2
-        id: bulk_price
-        text: str(root.bulk_price)
-        text_color: app.theme_cls.text_color
-    MDTextField:
-        size_hint_x: .15
-        id: qty
-        text: str(root.qty)
-        text_color: app.theme_cls.text_color
-
-
 <LogBox>
     MDIcon:
         size_hint_x: None
@@ -286,6 +213,7 @@
 
 <MiniCheckBox>
     state: "down"
+
 
 <DatetimeTextInput>
     background_color: (1,1,1,.1)

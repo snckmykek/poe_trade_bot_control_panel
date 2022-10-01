@@ -52,6 +52,32 @@ class Database(object):
             ) 
             """)
 
+        # Доп настройки: Предметы
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS af_items(
+                app_type NOT NULL,
+                item TEXT NOT NULL,
+                use BOOL NOT NULL,
+                max_price INT NOT NULL,
+                bulk_price INT NOT NULL,
+                qty INT NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (app_type, item) ON CONFLICT REPLACE
+            ) 
+            """)
+
+        # Доп настройки: Все предметы ПОЕ
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS af_poe_items(
+                category TEXT NOT NULL,
+                item TEXT NOT NULL,
+                name TEXT NOT NULL,
+                image TEXT NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (category, item) ON CONFLICT REPLACE
+            ) 
+            """)
+
     def initial_setup(self):
         self.fill_default()
 
@@ -74,6 +100,51 @@ class Database(object):
             f"""
             INSERT INTO
                 settings
+            VALUES
+                {','.join(map(str, values))}
+            """
+        )
+        self.commit()
+
+    def af_save_items(self, values):
+
+        try:
+            app_type = values[0][0]
+        except IndexError:
+            return
+
+        self.cur.execute(
+            f"""
+            DELETE FROM
+                af_items
+            WHERE
+                app_type = "{app_type}"
+            """
+        )
+
+        self.cur.execute(
+            f"""
+            INSERT INTO
+                af_items
+            VALUES
+                {','.join(map(str, values))}
+            """
+        )
+        self.commit()
+
+    def af_save_poe_items(self, values):
+
+        self.cur.execute(
+            f"""
+            DELETE FROM
+                af_poe_items
+            """
+        )
+
+        self.cur.execute(
+            f"""
+            INSERT INTO
+                af_poe_items
             VALUES
                 {','.join(map(str, values))}
             """
@@ -147,6 +218,80 @@ class Database(object):
                 WHERE
                     app_type = "{app_type}"
                 """)
+
+        return self.cur.fetchall()
+
+    def af_get_items(self, app_type, items=None):
+
+        if items is None:
+            item = None
+        elif isinstance(items, str):
+            item = items
+        elif len(items) == 1:
+            item = items[0]
+        else:
+            item = None
+
+        if item:
+            where = f'WHERE af_poe_items.item = "{item}"'
+        elif items:
+            where = f'WHERE af_poe_items.item in {tuple(items)}'
+        else:
+            where = f'WHERE af_items.item IS NOT NULL'
+
+        self.cur.execute(
+            f"""
+            SELECT 
+                af_poe_items.item,
+                af_poe_items.name,
+                af_poe_items.image,
+                IFNULL(af_items.use, False) as use,
+                IFNULL(af_items.max_price, 0) as max_price,
+                IFNULL(af_items.bulk_price, 0) as bulk_price,
+                IFNULL(af_items.qty, 0) as qty
+            FROM
+                af_poe_items
+                LEFT JOIN af_items
+                    ON af_poe_items.item = af_items.item
+                    AND af_items.app_type = "{app_type}"
+            {where}
+            """)
+
+        return self.cur.fetchall()
+
+    def af_get_categories(self):
+
+        self.cur.execute(
+            f"""
+            SELECT DISTINCT 
+                category
+            FROM
+                af_poe_items
+            """)
+
+        return self.cur.fetchall()
+
+    def af_get_poe_items(self, category=None, search=None):
+
+        where = ""
+        if category:
+            where += f"WHERE category = '{category}'"
+        if search:
+            search = "%" + "%".join(search.split(" ")) + "%"
+
+            if where:
+                where += f" AND name LIKE '{search}'"
+            else:
+                where += f"WHERE name LIKE '{search}'"
+
+        self.cur.execute(
+            f"""
+            SELECT 
+                *
+            FROM
+                af_poe_items
+            {where}
+            """)
 
         return self.cur.fetchall()
 

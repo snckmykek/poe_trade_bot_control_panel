@@ -29,7 +29,6 @@ class ActionTab(MDBoxLayout):
         1. Запускает следующий этап текущего действия или первый этап следующего действия.
         2. Если последний - запускает первый этап первого действия.
         3. Если app.need_pause, то по завершению последнего этапа последнего действия, останавливается.
-        :param start_over: Начать сначала + использовать действия, с флагом only_start_over
         :param go_to: Перейдет к действию с этим индексом. None - к следующему.
         :return:
         """
@@ -48,10 +47,10 @@ class ActionTab(MDBoxLayout):
         self.ids.stages_rv.refresh_from_data()
         app.current_action.play_pause(True)
 
-    @staticmethod
-    def go_action(action):
+    def go_action(self, action):
         app.need_stop_action = False
-        app.set_running(True, action.index == 0)
+        self.set_actions_completed(action.index)
+        app.set_running(True)
         app.update_current_action(action)
         app.action_thread.start()
 
@@ -64,7 +63,7 @@ class ActionTab(MDBoxLayout):
         elif go_to is not None:  # Указано, к какому действию надо перейти
             next_action = actions_list[-(go_to + 1)]
         elif self.is_last_available_action(app.current_action.index):  # Это было последнее доступное действие
-            app.start_over = False
+            self.reset_actions_completed()
             if not app.need_pause:
                 # Берем не просто первый, а первый доступный элемент
                 next_action = None
@@ -143,9 +142,15 @@ class ActionTab(MDBoxLayout):
         app.update_current_stage(current_stage)
         app.set_status(f"Выполняю.", True, True)
 
-    def reset_actions_completed(self):
+    def reset_actions_completed(self, _all=False):
         for action in self.ids.actions_parent.children:
-            action.completed = False
+            if _all or not action.only_start_over:
+                action.completed = False
+
+    def set_actions_completed(self, _index=0):
+        for action in self.ids.actions_parent.children:
+            if action.index < _index:
+                action.completed = True
 
 
 class ActionBox(MDCard, RoundedRectangularElevationBehavior):
@@ -188,7 +193,7 @@ class ActionBox(MDCard, RoundedRectangularElevationBehavior):
 
     def available(self):
         return not ((self.only_before_pause and not app.need_pause)
-                    or (self.only_start_over and (self.completed or not app.start_over)))
+                    or (self.only_start_over and self.completed))
 
     def change_active(self, value):
         self.active = value
@@ -205,9 +210,6 @@ class ActionBox(MDCard, RoundedRectangularElevationBehavior):
             self.completed = True
             if self.have_timer:
                 self._anim_timer.cancel(self)
-
-    def reset_completed(self):
-        self.completed = False
 
     def timeout(self, *args):
         if not self.active:

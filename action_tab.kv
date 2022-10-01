@@ -2,7 +2,6 @@
     spacing: '8dp'
     padding: ['8dp', 0, '8dp', '8dp']
     MDBoxLayout:
-        padding: [0, '8dp', 0, 0]
         RecycleView:
             data: app.actions[app.type] if app.actions else []
             scroll_type: ['bars', 'content']
@@ -13,6 +12,7 @@
                 default_size_hint: 1, None
                 height: self.minimum_height
                 orientation: 'vertical'
+                padding: [0, '8dp', '8dp', 0]
                 size_hint_y: None
                 spacing: '8dp'
     MDBoxLayout:
@@ -77,7 +77,7 @@
     opacity:
         0 if not app.first_run_animation_completed else \
         (self._min_opacity if ((self.only_before_pause and not app.need_pause) \
-        or (self.only_start_over and (self.completed or not app.start_over))) \
+        or (self.only_start_over and self.completed)) \
         else self._max_opacity)
     style: "outlined"
     line_color: app.theme_cls.primary_dark if root.active else (.2, .2, .2, .8)

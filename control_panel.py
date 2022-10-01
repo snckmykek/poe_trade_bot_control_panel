@@ -6,6 +6,7 @@
 
 # Настройки окна, должны быть до импорта графических объектов
 from kivy.config import Config
+from kivy.core.window import Window
 
 Config.set('graphics', 'resizable', '1')
 Config.set('graphics', 'width', '1200')
@@ -30,7 +31,7 @@ from kivy.properties import StringProperty, BooleanProperty, NumericProperty, Li
 from kivymd.app import MDApp
 from kivymd.uix.behaviors import RoundedRectangularElevationBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDRectangleFlatButton, MDRectangleFlatIconButton
+from kivymd.uix.button import MDRectangleFlatButton, MDRectangleFlatIconButton, MDFlatButton
 from kivymd.uix.card import MDCard
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.list import OneLineAvatarListItem, OneLineIconListItem
@@ -41,26 +42,88 @@ from kivymd.uix.snackbar import Snackbar
 from allignedtextinput import AlignedTextInput
 import gv
 import actions
+import additional_functional
 
 app = MDApp.get_running_app()
 
 
 class ControlPanelApp(MDApp):
     _anim_timer = None
-    _type_options = {'B': 'alpha-b-box-outline', 'S': 'alpha-s-box-outline', 'F1': 'keyboard-f1'}
-    _types = list(_type_options.keys())
-    actions = DictProperty()
+    type_options = {
+        'B': {
+            'icon': 'alpha-b-box-outline',
+            'buttons': [
+                {
+                    'text': "Настройки цен",
+                    'icon': 'calculator-variant-outline',
+                    'content_cls': additional_functional.Items
+                },
+                {
+                    'text': "Очередь сделок",
+                    'icon': 'format-list-numbered',
+                    'content_cls': additional_functional.Deals
+                },
+                {
+                    'text': "Черный список",
+                    'icon': 'playlist-remove',
+                    'content_cls': None
+                },
+                {
+                    'text': "Статистика",
+                    'icon': 'calendar-month',
+                    'content_cls': None
+                },
+            ]
+        },
+        'S': {
+            'icon': 'alpha-s-box-outline',
+            'buttons': [
+                {
+                    'text': "Настройки цен",
+                    'icon': 'calculator-variant-outline',
+                    'content_cls': None
+                },
+                {
+                    'text': "Очередь сделок",
+                    'icon': 'human-queue',
+                    'content_cls': None
+                },
+                {
+                    'text': "Черный список",
+                    'icon': 'playlist-remove',
+                    'content_cls': None
+                },
+                {
+                    'text': "Статистика",
+                    'icon': 'calendar-month',
+                    'content_cls': None
+                },
+            ]
+        },
+        'F1': {
+            'icon': 'keyboard-f1',
+            'buttons': [
+                {
+                    'text': "Статистика",
+                    'icon': 'calendar-month',
+                    'content_cls': None
+                },
+            ]
+        }
+    }
+    _types = list(type_options.keys())
     action_thread = ObjectProperty()
+    action_variables = DictProperty()
+    actions = DictProperty()
     current_action = ObjectProperty()
     current_stage = ObjectProperty()
+    variables = DictProperty({})
     first_run_animation_completed = BooleanProperty(True)
     main = None
     need_pause = BooleanProperty(False)
     need_stop_action = BooleanProperty(False)
-    start_over = BooleanProperty(True)
     status = StringProperty("Я родился")
     running = BooleanProperty(False)
-    action_variables: dict = dict()
     type = OptionProperty(_types[0], options=_types)
     timer = NumericProperty(0)
 
@@ -141,7 +204,7 @@ class ControlPanelApp(MDApp):
             else:
                 self.set_running(False)
         else:
-            self.set_running(True, True)
+            self.set_running(True)
             self.do_next_action(0)
 
     def upload_actions(self):
@@ -171,7 +234,7 @@ class ControlPanelApp(MDApp):
     def update_action_variables(self):
         def _value(row):
             if row['type'] == 'template':
-                return f"{row['window_resolution']}/{row['value']}"
+                return f"{self.type}/{row['window_resolution']}/{row['value']}"
             elif row['type'] == 'region' or row['type'] == 'coord':
                 return list(map(int, row['value'].split(", ")))
             else:
@@ -187,7 +250,7 @@ class ControlPanelApp(MDApp):
         self.status = status
 
     @mainthread
-    def set_running(self, value, start_over=False):
+    def set_running(self, value):
         if self.running == value:
             return
 
@@ -197,9 +260,8 @@ class ControlPanelApp(MDApp):
             self.need_pause = False
             self.set_status("Запускаюсь")
             self._update_timer(True)
-            self.start_over = start_over
         else:
-            self.main.ids.action_tab.reset_actions_completed()
+            self.main.ids.action_tab.reset_actions_completed(True)
             if self.need_pause:
                 if not self.timer:
                     self.set_status(f"Остановлен по времени (но дождался завершения действий)")
@@ -212,7 +274,6 @@ class ControlPanelApp(MDApp):
                     self.set_status(f"Остановлен по приказу (но действия уже были остановлены)")
             self._update_timer(False)
             self.need_pause = False
-            self.start_over = True
 
     def update_current_action(self, action):
         self.action_thread = threading.Thread(target=lambda *_: actions.do_current_action(), daemon=True)
@@ -256,16 +317,6 @@ class MainScreen(MDBoxLayout):
         app.first_run_animation_completed = True
         self.start_stop(True)
 
-    def refresh_items(self):
-        if app.type == 'B':
-            self.ids.items_box.data = [{
-                'name': f"item test (B) {i}",
-            } for i in range(20)]
-        elif app.type == 'S':
-            self.ids.items_box.data = [{
-                'name': f"item test (S) {i}",
-            } for i in range(20)]
-
     def refresh_logs(self):
         self.log_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.log_finish = datetime.strptime("2030-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")
@@ -274,16 +325,12 @@ class MainScreen(MDBoxLayout):
     def refresh_settings(self):
         pass
 
-    def set_use_all_items(self, value):
-        for item in self.ids.items_list.children:
-            item.use = value
-
     def start_stop(self, start):  # button callback
         if app.running == start:
             return
 
         if start:
-            app.set_running(True, True)
+            app.set_running(True)
             self.ids.action_tab.do_next_action(0)
             Snackbar(text="Запущен").open()
         else:
@@ -315,79 +362,14 @@ class MainScreen(MDBoxLayout):
         buttons = self.ids.action_tab.ids.buttons
         buttons.clear_widgets()
 
-        if app.type == "B":
-            button = MDRectangleFlatIconButton()
+        for button_setting in app.type_options[app.type]['buttons']:
+            button = CustomMDRectangleFlatIconButton()
+            button.content_cls = button_setting['content_cls']
             button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'calculator-variant-outline'
+            button.icon = button_setting['icon']
             button.size_hint_x = 1
-            button.text = "Настройки цен"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'format-list-numbered'
-            button.size_hint_x = 1
-            button.text = "Очередь сделок"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'playlist-remove'
-            button.size_hint_x = 1
-            button.text = "Черный список"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'calendar-month'
-            button.size_hint_x = 1
-            button.text = "Статистика"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-        elif app.type == "S":
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'calculator-variant-outline'
-            button.size_hint_x = 1
-            button.text = "Настройки цен"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'human-queue'
-            button.size_hint_x = 1
-            button.text = "Очередь сделок"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'playlist-remove'
-            button.size_hint_x = 1
-            button.text = "Черный список"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'calendar-month'
-            button.size_hint_x = 1
-            button.text = "Статистика"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
-            buttons.add_widget(button)
-
-        elif app.type == "F1":
-            button = MDRectangleFlatIconButton()
-            button.opacity = 0 if not app.first_run_animation_completed else 1
-            button.icon = 'calendar-month'
-            button.size_hint_x = 1
-            button.text = "Статистика"
-            button.bind(on_release=lambda *_: Snackbar(text="Еще не работает:)").open())
+            button.text = button_setting['text']
+            button.bind(on_release=self.on_action_button)
             buttons.add_widget(button)
 
     def fill_logs(self):
@@ -406,16 +388,33 @@ class MainScreen(MDBoxLayout):
         if instance_tab.tab_label_text == "Настройки":
             instance_tab.children[0].refresh_settings()
 
+    def on_action_button(self, instance):
 
-class ItemBox(MDBoxLayout):
-    use = BooleanProperty(False)
-    name = StringProperty("Name")
-    max_price = NumericProperty(0)
-    bulk_price = NumericProperty(0)
-    qty = NumericProperty(0)
+        if instance.content_cls is None:
+            Snackbar(text="Еще не работает:)").open()
+            return
 
-    def __init__(self, **kwargs):
-        super(ItemBox, self).__init__(**kwargs)
+        content = instance.content_cls()
+
+        dialog = additional_functional.CustomDialog(
+            auto_dismiss=False,
+            title=content.title,
+            type="custom",
+            content_cls=content,
+            buttons=[
+                MDRectangleFlatIconButton(
+                    icon=dialog_button['icon'],
+                    text=dialog_button['text'],
+                    theme_text_color="Custom",
+                    text_color=app.theme_cls.primary_color,
+                    on_release=dialog_button['on_release']
+                ) for dialog_button in content.buttons
+            ],
+        )
+
+        dialog.content_cls.dialog_parent = dialog
+        dialog.bind(on_pre_open=content.on_pre_open)
+        dialog.open()
 
 
 class LogBox(MDBoxLayout):
@@ -465,6 +464,10 @@ class DatetimeTextInput(AlignedTextInput):
             return super().insert_text("", from_undo=from_undo)
         else:
             return super().insert_text(substring, from_undo=from_undo)
+
+
+class CustomMDRectangleFlatIconButton(MDRectangleFlatIconButton):
+    content_cls = None
 
 
 if __name__ == "__main__":

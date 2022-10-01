@@ -31,6 +31,7 @@ from pygetwindow import Window
 
 import db_requests
 import gv
+import additional_functional
 
 app = MDApp.get_running_app()
 Builder.load_file("setting_tab.kv")
@@ -71,7 +72,7 @@ class SettingTab(MDStackLayout):
         app.update_action_variables()
 
     def open_action_variables(self):
-        dialog = MDDialog(
+        dialog = additional_functional.CustomDialog(
             auto_dismiss=False,
             title=f"Настройки шаблонов и координат",
             type="custom",
@@ -94,6 +95,9 @@ class SettingTab(MDStackLayout):
         dialog.buttons[1].bind(on_release=dialog.content_cls.save_data)
         dialog.buttons[1].bind(on_release=dialog.dismiss)
         dialog.open()
+
+    def update_poe_items(self):
+        additional_functional.update_poe_items()
 
 
 class SettingRow(MDBoxLayout):
@@ -241,22 +245,6 @@ class VariablesBox(MDBoxLayout):
                 )
             )
 
-        self.ids.variables.add_widget(
-            VariablesRow(
-                hint_text="Добавить",
-                icon="plus",
-                icon_func=self.add_row,
-                icons_right={
-                    'region': 'vector-square-plus',
-                    'coord': 'vector-point-plus',
-                    'template': 'image-plus-outline',
-                    'text': 'credit-card-plus-outline'
-                },
-                icon_right_func=VariablesRow.change_type,
-                type='region'
-            )
-        )
-
     def save_data(self, *args):
         setting_window_resolution = gv.db.get_settings(app.type, "setting_checkbox_window_resolution")
         variables = [(app.type,
@@ -264,7 +252,7 @@ class VariablesBox(MDBoxLayout):
                       variable.hint_text,
                       variable.text,
                       variable.type)
-                     for variable in self.ids.variables.children if variable.hint_text != "Добавить"]
+                     for variable in self.ids.variables.children]
 
         gv.db.save_action_variables(variables)
 
@@ -289,8 +277,7 @@ class VariablesBox(MDBoxLayout):
                 lambda variable_row, exe_name=self.ids.exe_name, delay=self.ids.screenshot_delay:
                 VariablesRow.get_from_screenshot(variable_row, exe_name, delay),
                 type=instance.type
-            ),
-            1
+            )
         )
 
         Clock.schedule_once(self.dialog_parent.update_height)
@@ -311,7 +298,7 @@ class VariablesRow(MDBoxLayout):
 
     def __init__(self, **kwargs):
         super(VariablesRow, self).__init__(**kwargs)
-        self.ids.tf.bind(on_touch_down=self.on_press_textfield_right_icon)
+        # self.ids.tf.bind(on_touch_down=self.on_press_textfield_right_icon)
 
     def on_press_textfield_right_icon(self, instance, touch):
         """
@@ -394,13 +381,15 @@ class VariablesRow(MDBoxLayout):
                 if self.type == 'coord':
                     new_value = ", ".join(map(str, [click_x, click_y]))
                 elif self.type == 'region':
-                    new_value = ", ".join(map(str, [*self.point1, click_x, click_y]))
+                    s_point = [min([self.point1[0], click_x]), min([self.point1[1], click_y])]
+                    f_point = [max([self.point1[0], click_x]), max([self.point1[1], click_y])]
+                    new_value = ", ".join(map(str, [*s_point, f_point[0] - s_point[0], f_point[1] - s_point[1]]))
                 elif self.type == 'template':
                     setting = gv.db.get_settings(app.type, "setting_checkbox_window_resolution")
                     if setting:
-                        directory = setting[0]['value']
+                        directory = os.path.join(app.type, setting[0]['value'])
                     else:
-                        directory = "common"
+                        directory = os.path.join(app.type, "common")
                     templates_path = os.path.join(r"images\templates", directory)
 
                     if not os.path.exists(templates_path):
@@ -412,7 +401,7 @@ class VariablesRow(MDBoxLayout):
                                 img[self.point1[1]:click_y, self.point1[0]:click_x])
                     new_value = template_name
                 else:
-                    Snackbar(text="Ошибка кода: Тип настройки не указан").open()
+                    Snackbar(text="Ошибка в коде: Тип настройки не указан").open()
                     new_value = ""
 
                 self.text = new_value

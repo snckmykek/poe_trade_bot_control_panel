@@ -1,0 +1,259 @@
+#: import os os
+
+
+<CustomMDTextField>
+    helper_text: self.helper_texts[self.text_type]
+    helper_text_mode: 'on_error'
+    text_color_normal: app.theme_cls.text_color
+    on_text: self.check_mask_text(*args)
+
+
+<Items>
+    orientation: 'vertical'
+    size_hint: None, None
+    height: Window.height * .7
+    width: Window.width * .7
+    spacing: '5dp'
+    MDBoxLayout:
+        height: "63dp"
+        padding: [0, 0, '16dp', 0]
+        size_hint_y: None
+        spacing: '5dp'
+        MDCheckbox:
+            size_hint_x: .05
+            on_active: root.set_use_all_items(self.active)
+        MDLabel:
+            padding: '4dp', 0
+            size_hint_x: .5
+            text: "Предмет"
+        MDIcon:
+            font_size: '36dp'
+            size_hint_x: None
+            width: self.height
+            text_color: 0, 0, 0, 0
+            theme_text_color: 'Custom'
+        MDLabel:
+            size_hint_x: .2
+            text: "Макс цена"
+        MDLabel:
+            size_hint_x: .2
+            text: "Балк цена"
+        MDLabel:
+            size_hint_x: .15
+            text: "Количество"
+        MDIconButton:
+            icon: ''
+    MDScrollView:
+        scroll_type: ['bars', 'content']
+        MDBoxLayout:
+            id: items_box
+            padding: [0, '5dp']
+            size_hint_y: None
+            height: self.minimum_height
+            orientation: 'vertical'
+
+
+<ItemRow>
+    height: "63dp"
+    padding: [0, 0, '16dp', 0]
+    size_hint_y: None
+    spacing: '5dp'
+    md_bg_color: [1, 0, 0, 0 if root.template_exists() else .25]
+    MDCheckbox:
+        size_hint_x: .05
+        id: use
+        active: root.use
+    AsyncImageButton:
+        source: "https://web.poecdn.com{}".format(root.image) if root.image else ""
+        color: [1, 1, 1, 1 if root.image else 0]
+        size_hint: None, None
+        pos_hint: {'center_y': .5}
+        size: dp(36), dp(36)
+        on_release: root.make_template()
+    MDLabel:
+        id: name
+        size_hint_x: .5
+        text: root.name
+        theme_text_color: "Custom"
+        text_color: app.theme_cls.disabled_hint_text_color
+        canvas.before:
+            Color:
+                rgba: app.theme_cls.disabled_hint_text_color
+            Line:
+                points: self.x, self.y + dp(16), self.x + self.width, self.y + dp(16)
+                width: 1
+                dash_length: dp(3)
+    CustomMDTextField:
+        id: max_price
+        hint_text: str(root.max_price)
+        size_hint_x: .2
+        text_type: 'int'
+    CustomMDTextField:
+        id: bulk_price
+        hint_text: str(root.bulk_price)
+        size_hint_x: .2
+        text_type: 'int'
+    CustomMDTextField:
+        id: qty
+        hint_text: str(root.qty)
+        size_hint_x: .15
+        text_type: 'int'
+    MDIconButton:
+        icon: 'trash-can'
+        on_release: root.icon_func(root)
+        pos_hint: {'center_x': .5, 'center_y': .5}
+        theme_text_color: "Custom"
+        text_color: app.theme_cls.disabled_hint_text_color
+
+
+<Deals>:
+    orientation: 'vertical'
+    size_hint_y: None
+    height: Window.height * .7
+    spacing: '5dp'
+    CustomMDCard:
+        orientation: 'vertical'
+        id: card
+        _indent: dp(12)
+        elevation: 10
+        size_hint_y: None
+        radius: [0,0,0,0]
+        height: current_deal.height + self._indent * 2
+        canvas:
+            Color:
+                rgba: app.theme_cls.primary_color
+            Line:
+                width: 1
+                points:
+                    [self.x + self._indent, self.y + self._indent,
+                    self.x + self._indent * 2, self.y + self._indent]
+            Line:
+                width: 1
+                points:
+                    [self.x + self.width - self._indent * 2, self.y + self._indent,
+                    self.x + self.width - self._indent, self.y + self._indent]
+            Line:
+                width: 1
+                points:
+                    [self.x + self._indent, self.y  + self.height - self._indent,
+                    self.x + self._indent * 2, self.y  + self.height - self._indent]
+            Line:
+                width: 1
+                points:
+                    [self.x + self.width - self._indent * 2, self.y  + self.height - self._indent,
+                    self.x + self.width - self._indent, self.y  + self.height - self._indent]
+            Line:
+                width: 1
+                points:
+                    [self.x + self._indent, self.y + self._indent,
+                    self.x + self._indent, self.y + self._indent * 2]
+            Line:
+                width: 1
+                points:
+                    [self.x + self._indent, self.y + self.height - self._indent,
+                    self.x + self._indent, self.y + self.height - self._indent * 2]
+            Line:
+                width: 1
+                points:
+                    [self.x + self.width - self._indent, self.y + self._indent,
+                    self.x + self.width - self._indent, self.y + self._indent * 2]
+            Line:
+                width: 1
+                points:
+                    [self.x + self.width - self._indent, self.y + self.height - self._indent,
+                    self.x + self.width - self._indent, self.y + self.height - self._indent * 2]
+
+        Widget:
+        ThreeLineIconListItem:
+            id: current_deal
+            divider_color: [0, 0, 0, 0]
+            text: app.action_variables['current_deal']['name'] if app.action_variables.get('current_deal') else ""
+            secondary_text:
+                "Кол-во: {}, цена: {}/шт".format(\
+                app.action_variables['current_deal']['qty'] if app.action_variables.get('current_deal') else "", \
+                app.action_variables['current_deal']['c_price'] if app.action_variables.get('current_deal') else "")
+            tertiary_text:
+                "Профит: {}".format( \
+                app.action_variables['current_deal']['profit'] if app.action_variables.get('current_deal') else "")
+            IconLeftWidget:
+                icon:
+                    'images/items/{}.png'.format(\
+                    app.action_variables['current_deal']['item'] if app.action_variables.get('current_deal') else "")
+        Widget:
+    RecycleView:
+        id: deals
+        data: app.action_variables['deals'] if app.action_variables.get('deals') else []
+        scroll_type: ['bars', 'content']
+        viewclass: 'OneLineIconListItem'
+        RecycleBoxLayout:
+            padding: ['30dp', 0]
+            id: stages_parent
+            default_size: None, '48dp'
+            default_size_hint: 1, None
+            height: self.minimum_height
+            orientation: 'vertical'
+            size_hint_y: None
+            spacing: '8dp'
+
+
+<CustomMDCard@MDCard+RectangularElevationBehavior>:
+    _indent: dp(3)
+
+<ItemSelector>:
+    size_hint: None, None
+    height: Window.height * .7
+    width: Window.width * .7
+    spacing: '8dp'
+    MDCard:
+        padding: ['8dp', '8dp']
+        size_hint_x: None
+        width: '240dp'
+        RecycleView:
+            data: root.categories
+            scroll_type: ['bars', 'content']
+            viewclass: 'ToggleRectangleFlatButton'
+            RecycleBoxLayout:
+                id: stages_parent
+                default_size: None, '24dp'
+                default_size_hint: 1, None
+                height: self.minimum_height
+                orientation: 'vertical'
+                size_hint_y: None
+                spacing: '8dp'
+    MDBoxLayout:
+        orientation: 'vertical'
+        MDTextField:
+            id: search
+            hint_text: "Поиск"
+            helper_text: str(round(root._timer, 2)) if root._timer else ""
+            helper_text_mode: "persistent"
+            on_text: root.start_anim()
+        ScrollView:
+            StackLayout:
+                id: items
+                orientation: 'lr-tb'
+                size_hint_y: None
+                spacing: '5dp'
+                height: self.minimum_height
+                cols: 8
+
+
+<ItemIconPOE>:
+    size_hint: None, None
+    size: '60dp', '60dp'
+    source: "https://web.poecdn.com{}".format(self.image_path)
+    canvas.after:
+        Color:
+            rgba:
+                app.theme_cls.primary_color if self.state == 'down' else [0] * 4
+        Line:
+            width: 1
+            rectangle:
+                (self.x, self.y, self.width, self.height)
+    on_release: self.func(self)
+
+<ToggleRectangleFlatButton>:
+    line_color: app.theme_cls.primary_color if self.state == 'down' else [0] * 4
+    on_release: self.func(self)
+
+<AsyncImageButton@ButtonBehavior+AsyncImage>:

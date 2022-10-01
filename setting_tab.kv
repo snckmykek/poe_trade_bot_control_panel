@@ -1,4 +1,5 @@
 #: import Window kivy.core.window.Window
+#: import CustomMDTextField additional_functional.CustomMDTextField
 
 <SettingTab>
     spacing: '8dp'
@@ -125,6 +126,12 @@
             pos_hint: {'center_x': .5, 'center_y': .5}
             size_hint_x: 1
             text: "Открыть настройку шаблонов"
+        MDRectangleFlatIconButton:
+            on_release: root.update_poe_items()
+            icon: 'refresh'
+            pos_hint: {'center_x': .5, 'center_y': .5}
+            size_hint_x: 1
+            text: "Обновить предметы ПОЕ"
 
 
 <SettingRow>:
@@ -147,14 +154,17 @@
 
 <VariablesBox>:
     orientation: 'vertical'
-    size_hint_y: None
+    size_hint: None, None
     height:
-        (variables.height + top_box.height) if (variables.height + top_box.height) < Window.height * 0.7 \
-        else Window.height * 0.7
+        (variables.height + top_box.height) if (variables.height + top_box.height) < Window.height * 0.75 \
+        else Window.height * 0.75
+    width: Window.width * .7
     MDBoxLayout:
         id: top_box
         size_hint_y: None
         height: '56dp'
+        spacing: '16dp'
+        padding: 0, 0, '16dp', 0
         MDTextField:
             id: exe_name
             hint_text: "Название окна приложения"
@@ -162,11 +172,24 @@
             id: screenshot_delay
             hint_text: "Задержка перед скриншотом"
     MDScrollView:
-        MDBoxLayout:
+        GridLayout:
+            cols: 3
             id: variables
-            orientation: 'vertical'
             size_hint_y: None
             height: self.minimum_height
+    VariablesRow:
+        hint_text: "Добавить"
+        icon: "plus"
+        icon_func: root.add_row
+        icons_right:
+            {
+            'region': 'vector-square-plus',
+            'coord': 'vector-point-plus',
+            'template': 'image-plus-outline',
+            'text': 'credit-card-plus-outline'
+            }
+        icon_right_func: lambda *_: self.change_type()
+        type: 'region'
 
 
 <VariablesRow>:
@@ -184,6 +207,7 @@
         icon_right: root.icons_right[root.type] if root.icons_right and root.type else ''
         text: root.text
         on_text: root.set_value(self.text)
+        on_touch_down: root.on_press_textfield_right_icon(*args)
     MDIconButton:
         icon: root.icon
         on_release: root.icon_func(root)

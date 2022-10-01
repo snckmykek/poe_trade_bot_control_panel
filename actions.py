@@ -1,6 +1,9 @@
 import os.path
 import threading
 import time
+from datetime import datetime
+from operator import itemgetter
+
 import cv2
 import keyboard as keyboard
 import pyautogui
@@ -14,10 +17,34 @@ from kivymd.app import MDApp
 import gv
 
 
+def _default_poetrade_info_test():
+    necessary_info = {}
+
+    necessary_info.update({'icon_link': "test"})
+    necessary_info.update({'offer_id': "F3G6df3L"})
+    necessary_info.update({'exchange_id': "1HshY764"})
+    necessary_info.update({'type_line': "type_line"})
+    necessary_info.update({'base_type': "base_type"})
+    necessary_info.update({'note': "test note"})
+    necessary_info.update({'quantity': 1})
+    necessary_info.update({'max_stack_size': 1})
+    necessary_info.update({'indexed': "indexed"})
+    necessary_info.update({'whisper': "whisper"})
+    necessary_info.update({'stash_info': {}})
+    necessary_info.update({'character_name': "CharacterName"})
+    necessary_info.update({'amount': 1})
+    necessary_info.update({'currency': "divine"})
+    necessary_info.update({'c_price': 120})
+
+    return necessary_info
+
+
 def do_current_action():
     app = MDApp.get_running_app()
     current_action = app.current_action
     action_tab = app.main.ids.action_tab
+
+    # time.sleep(2)  # Для теста !
 
     for stage in current_action.stages:
         if need_stop_action():
@@ -36,7 +63,7 @@ def do_current_action():
             Clock.schedule_once(lambda *_: action_tab.report_current_stage(stage['index'], error))
             return
 
-    Clock.schedule_once(lambda *_: app.do_next_action())
+    Clock.schedule_once(lambda *_: app.do_next_action())  # !
 
 
 def need_stop_action():
@@ -47,13 +74,13 @@ def need_stop_action():
             app.set_running(False)
         return True
     else:
+        time.sleep(.1)
         return False
 
 
 # region Вход
 
 def start_poe():
-
     time.sleep(1.5)
 
     variables = MDApp.get_running_app().action_variables
@@ -64,7 +91,7 @@ def start_poe():
     else:
         x, y, w, h = xywh
 
-    pyautogui.moveTo(x + w/2, y + h/2)
+    pyautogui.moveTo(x + w / 2, y + h / 2)
     pyautogui.click(clicks=2)
 
     # Ждем, пока нормально запустится ПОЕ (при запуске окно перемещается микросекунду)
@@ -73,7 +100,6 @@ def start_poe():
     while True:
         if need_stop_action():
             return f"Не запущено окно с именем {window_name}"
-        time.sleep(.1)
 
         _window_xywh = get_window_coord(window_name)
         # Только когда в одном и том же месте окно находится - всё ок
@@ -125,21 +151,145 @@ def choice_character():
 
 # endregion
 
-# region Выход из ПОЕ на перерыв
-def logout():
-    time.sleep(2)
+# region Продажа. Запросы на ПОЕ трейд
+def start_poe_trade():
+    variables = MDApp.get_running_app().action_variables
+
+    variables.update({'swag': None})
+    variables.update({'deals': None})
+
+    threading.Thread(target=lambda *_: poetrade_loop(), daemon=True).start()
+
+
+def poetrade_loop():
+    app = MDApp.get_running_app()
+    variables = app.action_variables
+
+    # variables['current_deal'] = _default_poetrade_info_test()
+    update_swag_info()
+
+    while True:
+        if app.need_pause:
+            return
+
+        _datetime = datetime.now()
+
+        update_offer_list()
+
+        _interval = float(variables['poetrade_info_update_frequency']) - (datetime.now() - _datetime).total_seconds()
+        if _interval > 0:
+            time.sleep(_interval)
+
+
+def update_swag_info():
+    variables = MDApp.get_running_app().action_variables
+    variables['swag'] = {'chaos': 4324, 'divine': 193}
+
+
+def update_offer_list():
+    app = MDApp.get_running_app()
+    variables = app.action_variables
+
+    new_offer_list = []
+
+    # for currency in ["exalted", "chaos"]:
+    for item in [{'bulk_price': 125}, {'bulk_price': 150}]:
+        if app.need_pause:
+            return
+
+        _datetime = datetime.now()
+
+        # offers = _get_items_bulk((item['name'],), ("chaos",), 1, 5)
+        offers = [_default_poetrade_info_test()] * 3
+
+        new_offer_list.extend(
+            [
+                (
+                    offer['offer_id'],
+                    offer['exchange_id'],
+                    (item['bulk_price'] - offer['c_price']) * offer['quantity']
+                ) for offer in offers if item['bulk_price'] > offer['c_price']
+            ]
+        )
+
+        # Уменьшаем интервал на время выполнения прошлого запроса
+        _interval = float(variables['requests_interval']) - (datetime.now() - _datetime).total_seconds()
+        if _interval > 0:
+            time.sleep(_interval)
+
+    sorted_offer_list = sorted(new_offer_list, key=itemgetter(2), reverse=True)
+    variables['deals'] = {'text': offer[0] + offer[1] for offer in sorted_offer_list}
 
 
 # endregion
 
 # region Продажа. Подготовка
+def go_home():
+    variables = MDApp.get_running_app().action_variables
+
+    window_name = "Path of Exile"
+    window_xywh = get_window_coord(window_name)
+    if not window_xywh:
+        return f"Не запущено окно с именем {window_name}"
+
+    # Ждем/проверяем запуск игры
+    template = variables['template_game_loaded']
+    region = variables['region_game_loaded']
+    xywh = None
+    while not xywh:
+        xywh = find_by_template(to_global(window_xywh, region), template, file_to_save="test_game_loaded")
+        if need_stop_action():
+            return f"Не найден шаблон {template} на экране в области окна ПОЕ"
+
+    pyautogui.press('enter')
+    time.sleep(.02)
+    keyboard.write('/hideout', delay=0)
+    time.sleep(.02)
+    pyautogui.press('enter')
+
 
 def check_stash():
-    time.sleep(2)
+    variables = MDApp.get_running_app().action_variables
+
+    window_name = "Path of Exile"
+    window_xywh = get_window_coord(window_name)
+    if not window_xywh:
+        return f"Не запущено окно с именем {window_name}"
+
+    # Ждем/проверяем запуск игры
+    template = variables['template_stash_title']
+    xywh = None
+    while not xywh:
+        xywh = find_by_template(window_xywh, template)
+        if need_stop_action():
+            return f"Не найден шаблон {template} на экране в области окна ПОЕ"
 
 
+# endregion
+
+# region Выход из ПОЕ на перерыв
+def logout():
+    pyautogui.hotkey("alt", "f4")
+
+    window_name = "Path of Exile"
+    while get_window_coord(window_name):
+        if need_stop_action():
+            return f"Не смог выйти из ПОЕ"
+
+
+# endregion
+
+# region Продажа. Ожидание очереди сделок
 def wait_trade_info():
-    time.sleep(2)
+    app = MDApp.get_running_app()
+
+    while not app.variables.get("swag"):
+        if need_stop_action():
+            return "Не дождался инфы о валюте в стеше"
+
+    while not app.variables.get("deals"):
+        if need_stop_action():
+            return "Не дождался инфы о сделках"
 
 
 # endregion
@@ -178,20 +328,13 @@ def wait_confirm():
 
 # endregion
 
-# region Продажа. ТП в свой хайдаут
-def go_home():
-    time.sleep(2)
-
-
-# endregion
-
 # region test
 
 def test():
     time.sleep(3)
 
 
-#endregion
+# endregion
 
 # region Общие функции
 
@@ -211,8 +354,14 @@ def click_to_template(region, template, offset_x=.5, offset_y=.5, clicks=1):
 
 
 # Перевести координаты из относительных окна приложения в абсолютные (относительно левого верхнего угла экрана)
+# Переводит только первые 2 значения из списка, остальное оставляет как есть
 def to_global(window_coords, coords):
-    return [window_coords[0] + coords[0], window_coords[1] + coords[1]]
+    new_coords = [window_coords[0] + coords[0], window_coords[1] + coords[1]]
+
+    if len(coords) > 2:
+        new_coords.extend(coords[2:])
+
+    return new_coords
 
 
 # Найти по шаблону
@@ -260,6 +409,14 @@ def get_window_coord(window_name):
     h = rect[3] - y
 
     return [x, y, w, h]
+
+
+def send_to_chat(message):
+    pyautogui.press('enter')
+    time.sleep(.02)
+    keyboard.write(message, delay=0)
+    time.sleep(.02)
+    pyautogui.press('enter')
 
 
 # endregion
