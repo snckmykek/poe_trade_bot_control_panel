@@ -1,4 +1,7 @@
 import sqlite3
+
+from kivy.clock import mainthread
+
 import gv
 
 from kivymd.app import MDApp
@@ -7,7 +10,7 @@ from kivymd.app import MDApp
 class Database(object):
 
     def __init__(self):
-        self.con = sqlite3.connect(fr'{gv.db_path}\database.db')
+        self.con = sqlite3.connect(fr'{gv.db_path}\database.db', check_same_thread=False)
         self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
         self.sqlite_create_db()
@@ -61,7 +64,7 @@ class Database(object):
                 use BOOL NOT NULL,
                 max_price INT NOT NULL,
                 bulk_price INT NOT NULL,
-                qty INT NOT NULL,
+                max_qty INT NOT NULL,
                 CONSTRAINT pk PRIMARY KEY (app_type, item) ON CONFLICT REPLACE
             ) 
             """)
@@ -248,7 +251,7 @@ class Database(object):
                 IFNULL(af_items.use, False) as use,
                 IFNULL(af_items.max_price, 0) as max_price,
                 IFNULL(af_items.bulk_price, 0) as bulk_price,
-                IFNULL(af_items.qty, 0) as qty
+                IFNULL(af_items.max_qty, 0) as max_qty
             FROM
                 af_poe_items
                 LEFT JOIN af_items
@@ -257,7 +260,9 @@ class Database(object):
             {where}
             """)
 
-        return self.cur.fetchall()
+        result = self.cur.fetchall()
+
+        return result if result else []
 
     def af_get_categories(self):
 

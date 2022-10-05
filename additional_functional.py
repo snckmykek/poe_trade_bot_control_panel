@@ -22,6 +22,7 @@ from kivymd.uix.button import MDRectangleFlatIconButton, MDRectangleFlatButton
 from kivymd.uix.card import MDCard
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.label import MDIcon
+from kivymd.uix.list import IconLeftWidget, OneLineIconListItem
 from kivymd.uix.snackbar import Snackbar
 from kivymd.uix.textfield import MDTextField
 import gv
@@ -115,7 +116,7 @@ class Items(MDBoxLayout):
                     icon_func=self.delete_row,
                     bulk_price=item_setting['bulk_price'],
                     max_price=item_setting['max_price'],
-                    qty=item_setting['qty'],
+                    qty=item_setting['max_qty'],
                     use=item_setting['use'],
                 )
             )
@@ -310,7 +311,7 @@ class ItemRow(MDBoxLayout):
                 if setting:
                     directory = os.path.join(app.type, setting[0]['value'], "items")
                 else:
-                    directory = os.path.join(app.type, "common", "items")
+                    directory = os.path.join(app.type, "relative", "items")
                 templates_path = os.path.join(r"images\templates", directory)
 
                 if not os.path.exists(templates_path):
@@ -334,7 +335,7 @@ class ItemRow(MDBoxLayout):
         if setting:
             directory = os.path.join(app.type, setting[0]['value'], "items")
         else:
-            directory = os.path.join(app.type, "common", "items")
+            directory = os.path.join(app.type, "relative", "items")
         templates_path = os.path.join(r"images\templates", directory)
 
         return os.path.exists(os.path.join(templates_path, f"{self.item}.png"))
@@ -402,7 +403,6 @@ class Deals(MDBoxLayout):
         ]
 
     def on_pre_open(self, *args):
-        self.test()
         pass
 
     def test(self):
@@ -412,6 +412,7 @@ class Deals(MDBoxLayout):
 
         app.action_variables.update({'current_deal': {
             'item': "1",
+            'image': "/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lBZGRNb2RUb1JhcmUiLCJzY2FsZSI6MX1d/33f2656aea/CurrencyAddModToRare.png",
             'name': "nickname",
             'c_price': 55,
             'qty': 2,
@@ -460,12 +461,17 @@ class ItemLinePOE(ToggleRectangleFlatButton):
 
 
 def update_poe_items():
+    """
+    Для настроек, выполняется(обновляются предметы ПОЕ) вручную по необходимости и сохраняется в БД.
+    TODO: Продумать логичность автоматизирования
+    """
     headers = {
         "Host": "www.pathofexile.com",
         "Connection": "keep - alive",
         "Accept": "*/*",
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.82 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/99.0.4844.82 Safari/537.36",
         "Origin": "https://www.pathofexile.com",
         "Accept-Encoding": "gzip,deflate,br",
         "Accept-Language": "q=0.9,en-US;q=0.8,en;q=0.7",
@@ -488,3 +494,14 @@ def update_poe_items():
                 (category['label'], item['id'], item['text'], item['image'] if item.get('image') else ""))
 
     gv.db.af_save_poe_items(items)
+
+
+class DealOneLineIconListItem(OneLineIconListItem):
+    item_currency = StringProperty()
+    exchange_currency = StringProperty()
+    image = StringProperty()
+    item_amount = NumericProperty()
+    exchange_amount = NumericProperty()
+    item_stock = NumericProperty()
+    available_item_stock = NumericProperty()
+    profit = NumericProperty()

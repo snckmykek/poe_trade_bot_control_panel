@@ -379,11 +379,17 @@ class VariablesRow(MDBoxLayout):
                 # cv2.imshow("subimg", sub_img)
 
                 if self.type == 'coord':
-                    new_value = ", ".join(map(str, [click_x, click_y]))
+                    new_value = ", ".join(map(str, [round(click_x / h, 4), round(click_y / h, 4)]))
+
                 elif self.type == 'region':
-                    s_point = [min([self.point1[0], click_x]), min([self.point1[1], click_y])]
-                    f_point = [max([self.point1[0], click_x]), max([self.point1[1], click_y])]
-                    new_value = ", ".join(map(str, [*s_point, f_point[0] - s_point[0], f_point[1] - s_point[1]]))
+                    s_point = [round(min([self.point1[0], click_x]) / h, 4),
+                               round(min([self.point1[1], click_y]) / h, 4)]
+                    e_point = [round(max([self.point1[0], click_x]) / h, 4),
+                               round(max([self.point1[1], click_y]) / h, 4)]
+                    new_value = ", ".join(map(str, [*s_point,
+                                                    round(e_point[0] - s_point[0], 4),
+                                                    round(e_point[1] - s_point[1], 4)]))
+
                 elif self.type == 'template':
                     setting = gv.db.get_settings(app.type, "setting_checkbox_window_resolution")
                     if setting:
@@ -399,7 +405,15 @@ class VariablesRow(MDBoxLayout):
 
                     cv2.imwrite(os.path.join(templates_path, template_name),
                                 img[self.point1[1]:click_y, self.point1[0]:click_x])
-                    new_value = template_name
+
+                    s_point = [round(min([self.point1[0], click_x]) / h, 4),
+                               round(min([self.point1[1], click_y]) / h, 4)]
+                    e_point = [round(max([self.point1[0], click_x]) / h, 4),
+                               round(max([self.point1[1], click_y]) / h, 4)]
+                    new_value = ", ".join(map(str, [template_name,
+                                                    round(e_point[0] - s_point[0], 4),
+                                                    round(e_point[1] - s_point[1], 4)]))
+
                 else:
                     Snackbar(text="Ошибка в коде: Тип настройки не указан").open()
                     new_value = ""

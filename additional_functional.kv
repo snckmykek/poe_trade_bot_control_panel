@@ -87,12 +87,12 @@
         id: max_price
         hint_text: str(root.max_price)
         size_hint_x: .2
-        text_type: 'int'
+        text_type: 'float'
     CustomMDTextField:
         id: bulk_price
         hint_text: str(root.bulk_price)
         size_hint_x: .2
-        text_type: 'int'
+        text_type: 'float'
     CustomMDTextField:
         id: qty
         hint_text: str(root.qty)
@@ -167,24 +167,37 @@
         ThreeLineIconListItem:
             id: current_deal
             divider_color: [0, 0, 0, 0]
-            text: app.action_variables['current_deal']['name'] if app.action_variables.get('current_deal') else ""
+            text:
+                "Ник: {}".format(app.action_variables['current_deal']['character_name'] \
+                if app.action_variables.get('current_deal') else "")
             secondary_text:
-                "Кол-во: {}, цена: {}/шт".format(\
-                app.action_variables['current_deal']['qty'] if app.action_variables.get('current_deal') else "", \
-                app.action_variables['current_deal']['c_price'] if app.action_variables.get('current_deal') else "")
+                "Всего: {}, цена за шт: {}/{} {}".format(\
+                app.action_variables['current_deal']['available_item_stock'] \
+                if app.action_variables.get('current_deal') else "", \
+                app.action_variables['current_deal']['exchange_amount'] \
+                if app.action_variables.get('current_deal') else "", \
+                app.action_variables['current_deal']['item_amount'] \
+                if app.action_variables.get('current_deal') else "", \
+                app.action_variables['current_deal']['exchange_currency'] \
+                if app.action_variables.get('current_deal') else "")
             tertiary_text:
-                "Профит: {}".format( \
+                "Профит: {}".format(\
                 app.action_variables['current_deal']['profit'] if app.action_variables.get('current_deal') else "")
-            IconLeftWidget:
-                icon:
-                    'images/items/{}.png'.format(\
-                    app.action_variables['current_deal']['item'] if app.action_variables.get('current_deal') else "")
+            AsyncImageLeftWidget:
+                source:
+                    "https://web.poecdn.com{}".format(\
+                    app.action_variables['current_deal']['image']) if app.action_variables.get('current_deal') else ""
+                color:
+                    [1, 1, 1, 1 if app.action_variables.get('current_deal') \
+                    and app.action_variables['current_deal']['image'] else 0]
+                pos_hint: {'center_x': .5, 'center_y': .5}
+
         Widget:
     RecycleView:
         id: deals
         data: app.action_variables['deals'] if app.action_variables.get('deals') else []
         scroll_type: ['bars', 'content']
-        viewclass: 'OneLineIconListItem'
+        viewclass: 'DealOneLineIconListItem'
         RecycleBoxLayout:
             padding: ['30dp', 0]
             id: stages_parent
@@ -195,6 +208,18 @@
             size_hint_y: None
             spacing: '8dp'
 
+
+<DealOneLineIconListItem>:
+    text:
+        "x{}({}) Цена: {}/{} {}, профит: {}".format(self.item_stock, self.available_item_stock,
+        self.exchange_amount, self.item_amount, self.exchange_currency, self.profit)
+    AsyncImageLeftWidget:
+        color:
+            [1, 1, 1, 1 if root.image else 0]
+        pos_hint: {'center_y': .5}
+        source:
+            "https://web.poecdn.com{}".format(root.image) if root.image else ""
+        size: dp(26), dp(26)
 
 <CustomMDCard@MDCard+RectangularElevationBehavior>:
     _indent: dp(3)
@@ -257,3 +282,5 @@
     on_release: self.func(self)
 
 <AsyncImageButton@ButtonBehavior+AsyncImage>:
+
+<AsyncImageLeftWidget@ILeftBodyTouch+AsyncImage>:

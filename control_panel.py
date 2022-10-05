@@ -234,9 +234,13 @@ class ControlPanelApp(MDApp):
     def update_action_variables(self):
         def _value(row):
             if row['type'] == 'template':
-                return f"{self.type}/{row['window_resolution']}/{row['value']}"
+                values = row['value'].split(", ")
+                return {
+                    'path': f"{self.type}/{row['window_resolution']}/{values[0]}",
+                    'size': list(map(float, values[1:3]))
+                }
             elif row['type'] == 'region' or row['type'] == 'coord':
-                return list(map(int, row['value'].split(", ")))
+                return list(map(float, row['value'].split(", ")))
             else:
                 return row['value']
 
