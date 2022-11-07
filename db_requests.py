@@ -1,20 +1,16 @@
 import sqlite3
-
-from kivy.clock import mainthread
-
-import gv
-
-from kivymd.app import MDApp
+import threading
 
 
-class Database(object):
+class Database:
 
-    def __init__(self):
-        self.con = sqlite3.connect(fr'{gv.db_path}\database.db', check_same_thread=False)
+    def __init__(self, db_path):
+        self.con = sqlite3.connect(db_path, check_same_thread=False)
         self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
         self.sqlite_create_db()
         self.initial_setup()
+        self.lock = threading.Lock()
 
     def commit(self):
         self.con.commit()
@@ -24,60 +20,46 @@ class Database(object):
         self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS settings(
-                app_type NOT NULL,
+                bot_key NOT NULL,
                 key TEXT NOT NULL,
                 value NOT NULL,
                 type TEXT NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (app_type, key) ON CONFLICT REPLACE
+                CONSTRAINT pk PRIMARY KEY (bot_key, key) ON CONFLICT REPLACE
             ) 
             """)
 
         # Списки значений
+        # self.cur.execute(
+        #     """
+        #     CREATE TABLE IF NOT EXISTS limited_values(
+        #         key TEXT NOT NULL,
+        #         value NOT NULL,
+        #         CONSTRAINT pk PRIMARY KEY (key, value) ON CONFLICT REPLACE
+        #     )
+        #     """)
+
+        # Переменные для задач Бота
         self.cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS limited_values(
+            CREATE TABLE IF NOT EXISTS bots_variables(
+                bot_key TEXT NOT NULL,
                 key TEXT NOT NULL,
-                value NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (key, value) ON CONFLICT REPLACE
+                window_key TEXT NOT NULL DEFAULT "any",
+                value TEXT NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (bot_key, window_key, key) ON CONFLICT REPLACE
             ) 
             """)
 
-        # Переменные для Действий
+        # Логи
         self.cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS action_variables(
-                app_type NOT NULL,
-                window_resolution NOT NULL,
-                key TEXT NOT NULL,
-                value NOT NULL,
-                type TEXT NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (app_type, window_resolution, key) ON CONFLICT REPLACE
-            ) 
-            """)
-
-        # Доп настройки: Предметы
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS af_items(
-                app_type NOT NULL,
-                item TEXT NOT NULL,
-                use BOOL NOT NULL,
-                max_price INT NOT NULL,
-                bulk_price INT NOT NULL,
-                max_qty INT NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (app_type, item) ON CONFLICT REPLACE
-            ) 
-            """)
-
-        # Доп настройки: Все предметы ПОЕ
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS af_poe_items(
-                category TEXT NOT NULL,
-                item TEXT NOT NULL,
-                name TEXT NOT NULL,
-                image TEXT NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (category, item) ON CONFLICT REPLACE
+            CREATE TABLE IF NOT EXISTS logs(
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_key TEXT NOT NULL,
+                date INTEGER NOT NULL,
+                level INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                details TEXT NOT NULL DEFAULT ""
             ) 
             """)
 
@@ -97,7 +79,71 @@ class Database(object):
         #     """)
         pass
 
-    def save_settings(self, values):
+    # region Переменные для задач Бота
+    def get_bots_variable(self, bot_key, key, window_key):
+
+        with self.lock:
+            self.cur.execute(
+                f"""
+                SELECT 
+                    value
+                FROM
+                    bots_variables
+                WHERE
+                    bot_key = "{bot_key}" and window_key = "{window_key}" and key = "{key}"
+                """)
+
+            result = self.cur.fetchone()
+            if result:
+                return result['value']
+
+    def save_bots_variable(self, values: list):
+
+        self.cur.execute(
+            f"""
+            INSERT INTO
+                bots_variables
+            VALUES
+                {','.join(map(str, values))}
+            """
+        )
+        self.commit()
+
+    # endregion
+
+    # region Настройки
+
+    def get_setting(self, bot_key, key):
+
+        with self.lock:
+            self.cur.execute(
+                f"""
+                SELECT 
+                    value
+                FROM
+                    settings
+                WHERE
+                    bot_key = "{bot_key}" and key = "{key}"
+                """)
+
+            result = self.cur.fetchone()
+            if result:
+                return result['value']
+
+    def get_settings(self, bot_key, keys):
+        self.cur.execute(
+            f"""
+            SELECT 
+                *
+            FROM
+                settings
+            WHERE
+                bot_key = "{bot_key}" and key in {keys}
+            """)
+
+        return self.cur.fetchall()
+
+    def save_settings(self, values: list):
 
         self.cur.execute(
             f"""
@@ -109,247 +155,45 @@ class Database(object):
         )
         self.commit()
 
-    def af_save_items(self, values):
+    # endregion
 
-        try:
-            app_type = values[0][0]
-        except IndexError:
-            return
+    # region Логи
 
-        self.cur.execute(
-            f"""
-            DELETE FROM
-                af_items
-            WHERE
-                app_type = "{app_type}"
-            """
-        )
-
-        self.cur.execute(
-            f"""
-            INSERT INTO
-                af_items
-            VALUES
-                {','.join(map(str, values))}
-            """
-        )
-        self.commit()
-
-    def af_save_poe_items(self, values):
-
-        self.cur.execute(
-            f"""
-            DELETE FROM
-                af_poe_items
-            """
-        )
-
-        self.cur.execute(
-            f"""
-            INSERT INTO
-                af_poe_items
-            VALUES
-                {','.join(map(str, values))}
-            """
-        )
-        self.commit()
-
-    def save_action_variables(self, values):
-
-        app_type = values[0][0]
-
-        self.cur.execute(
-            f"""
-            DELETE FROM
-                action_variables
-            WHERE
-                app_type = "{app_type}"
-                and window_resolution in (SELECT 
-                                            value
-                                          FROM 
-                                            settings
-                                          WHERE 
-                                            app_type = "{app_type}" and key = "setting_checkbox_window_resolution")
-            """
-        )
-        self.cur.execute(
-            f"""
-            INSERT INTO
-                action_variables
-            VALUES
-                {','.join(map(str, values))}
-            """
-        )
-        self.commit()
-
-    def get_settings(self, app_type, keys=None):
-
-        if isinstance(keys, str):
-            key = keys
-        elif len(keys) == 1:
-            key = keys[0]
-        else:
-            key = None
-
-        if key:
-            self.cur.execute(
-                f"""
-                SELECT 
-                    *
-                FROM
-                    settings
-                WHERE
-                    app_type = "{app_type}" and key = "{key}"
-                """)
-        elif keys:
-            self.cur.execute(
-                f"""
-                SELECT 
-                    *
-                FROM
-                    settings
-                WHERE
-                    app_type = "{app_type}" and key in {keys}
-                """)
-        else:
-            self.cur.execute(
-                f"""
-                SELECT 
-                    *
-                FROM
-                    settings
-                WHERE
-                    app_type = "{app_type}"
-                """)
-
-        return self.cur.fetchall()
-
-    def af_get_items(self, app_type, items=None):
-
-        if items is None:
-            item = None
-        elif isinstance(items, str):
-            item = items
-        elif len(items) == 1:
-            item = items[0]
-        else:
-            item = None
-
-        if item:
-            where = f'WHERE af_poe_items.item = "{item}"'
-        elif items:
-            where = f'WHERE af_poe_items.item in {tuple(items)}'
-        else:
-            where = f'WHERE af_items.item IS NOT NULL'
-
-        self.cur.execute(
-            f"""
-            SELECT 
-                af_poe_items.item,
-                af_poe_items.name,
-                af_poe_items.image,
-                IFNULL(af_items.use, False) as use,
-                IFNULL(af_items.max_price, 0) as max_price,
-                IFNULL(af_items.bulk_price, 0) as bulk_price,
-                IFNULL(af_items.max_qty, 0) as max_qty
-            FROM
-                af_poe_items
-                LEFT JOIN af_items
-                    ON af_poe_items.item = af_items.item
-                    AND af_items.app_type = "{app_type}"
-            {where}
-            """)
-
-        result = self.cur.fetchall()
-
-        return result if result else []
-
-    def af_get_categories(self):
-
-        self.cur.execute(
-            f"""
-            SELECT DISTINCT 
-                category
-            FROM
-                af_poe_items
-            """)
-
-        return self.cur.fetchall()
-
-    def af_get_poe_items(self, category=None, search=None):
-
-        where = ""
-        if category:
-            where += f"WHERE category = '{category}'"
-        if search:
-            search = "%" + "%".join(search.split(" ")) + "%"
-
-            if where:
-                where += f" AND name LIKE '{search}'"
-            else:
-                where += f"WHERE name LIKE '{search}'"
-
+    def get_log(self, log_id):
         self.cur.execute(
             f"""
             SELECT 
                 *
             FROM
-                af_poe_items
-            {where}
+                logs
+            WHERE
+                log_id = {log_id}"
             """)
 
-        return self.cur.fetchall()
+        return self.cur.fetchone()
 
-    def get_action_variables(self, app_type):
+    def get_logs(self, bot_key, start_time, end_time):
         self.cur.execute(
             f"""
             SELECT 
                 *
             FROM
-                action_variables
+                logs
             WHERE
-                app_type = "{app_type}"
-                and window_resolution in (SELECT 
-                                            value
-                                          FROM 
-                                            settings
-                                          WHERE 
-                                            app_type = "{app_type}" and key = "setting_checkbox_window_resolution")
+                bot_key = "{bot_key}" and date >= {start_time} and date <= {end_time}
             """)
 
         return self.cur.fetchall()
 
-    def get_selection(self, selection):
-        self.cur.execute(
-            f"""
-            SELECT 
-                value
-            FROM
-                limited_values
-            WHERE
-               key = "{selection}"
-            """)
-
-        return [row['value'] for row in self.cur.fetchall()]
-
-    def add_selection_value(self, selection, value):
+    def save_log(self, values: tuple):
         self.cur.execute(
             f"""
             INSERT INTO
-                limited_values
+                logs (bot_key, date, level, text, details)
             VALUES
-                {selection, value}
+                {values}
             """
         )
         self.commit()
 
-    def delete_selection_value(self, selection, value):
-        self.cur.execute(
-            f"""
-            DELETE FROM
-                limited_values
-            WHERE
-                key = "{selection}" and value = "{value}"
-            """
-        )
-        self.commit()
+    # endregion

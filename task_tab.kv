@@ -1,0 +1,101 @@
+<TaskTab>
+    padding: ['8dp', 0, '8dp', '8dp']
+    spacing: '4dp'
+    MDScrollView:
+        do_scroll_x: False
+        MDGridLayout:
+            id: tasks_parent
+            cols: 1
+            height:self.minimum_height
+            padding: [0, '8dp', '6dp', '8dp']
+            size_hint_y: None
+            spacing: '8dp'
+    MDBoxLayout:
+        orientation: 'vertical'
+        spacing: '8dp'
+        MDCard:
+            id: content
+            opacity: 0 if not app.first_run_animation_completed else 1  # Для стартового ништяка
+            orientation: 'vertical'
+            radius: [0, 0, 6, 6]
+        MDGridLayout:
+            id: buttons
+            cols: 1 if len(self.children) < 3 else 2
+            spacing: '8dp'
+            size_hint_y: None
+            height: self.minimum_height
+
+<TaskBox>
+    elevation: 12
+    extended: bool(len(content.children))
+    height: self.minimum_height
+    line_color: app.theme_cls.primary_dark if root.active else (.2, .2, .2, .8)
+    on_press: app.display_stages(root.index)
+    opacity:
+        0 if not app.first_run_animation_completed else \
+        (self._max_opacity if (self.available_mode == 'always' \
+        or (self.available_mode == 'before_break' and app.need_break) \
+        or (self.available_mode == 'after_start' and not self.completed_once)) \
+        else self._min_opacity)
+    orientation: 'vertical'
+    padding: ["6dp", "6dp"]
+    size_hint_y: None
+    style: "outlined"
+    MDBoxLayout:
+        height: '72dp'
+        size_hint_y: None
+        MDBoxLayout:
+            orientation: 'vertical'
+            MDLabel:
+                text: root.name
+        MDLabel:
+            text: "{}".format(datetime.utcfromtimestamp(root.timer).strftime('%M:%S')) if root.task_time else ""
+            size_hint_x: None
+            width: '40dp'
+        MDIconButton:
+            icon: 'stop' if root.active else 'play'
+            theme_text_color: "Custom"
+            text_color: app.theme_cls.primary_dark if root.active else app.theme_cls.text_color
+            on_press: root.play_callback(not root.active)
+            pos_hint: {"center_x": 1, "center_y": .5}
+    MDBoxLayout:
+        id: content
+        height: self.minimum_height
+        size_hint_y: None
+
+
+<Stages>
+    height: 0
+    padding: [0, 0, 0, stages_parent.spacing]
+    size_hint_y: None
+    RecycleView:
+        id: stages_rv
+        data: app.tasks_obj[app.extended_task].stages if app.tasks_obj else []
+        do_scroll: (False, False)
+        scroll_type: ['bars', 'content']
+        viewclass: 'Stage'
+        RecycleBoxLayout:
+            id: stages_parent
+            default_size: None, '48dp'
+            default_size_hint: 1, None
+            height: self.minimum_height
+            orientation: 'vertical'
+            size_hint_y: None
+            spacing: '8dp'
+
+
+<Stage>
+    divider: "Inset"
+    divider_color:
+        app.theme_cls.primary_dark if root.index == app.current_stage and app.extended_task == app.current_task \
+        else (.2, .2, .2, .8)
+    IconLeftWidget:
+        icon:
+            root.widgets['queue'] if (app.current_task != app.extended_task) or (root.index > app.current_stage) else \
+            root.widgets['completed'] if root.index < app.current_stage else \
+            root.widgets[app.stages_box.current_status]
+        theme_text_color: "Custom"
+        text_color:
+            app.theme_cls.primary_dark if root.index == app.current_stage and app.extended_task == app.current_task \
+            else app.theme_cls.text_color
+        on_release: root.start()

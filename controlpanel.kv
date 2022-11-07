@@ -1,8 +1,9 @@
 #: import AlignedTextInput allignedtextinput.AlignedTextInput
 #: import datetime datetime.datetime
 #: import Snackbar kivymd.uix.snackbar.Snackbar
-#: import ActionTab action_tab.ActionTab
-#: import SettingTab setting_tab.SettingTab
+#: import TaskTab task_tab.TaskTab
+#: import SettingTab setting_tab.AppSettingTab
+#: import SettingTab setting_tab.BotSettingTab
 
 
 <MainScreen>
@@ -13,29 +14,29 @@
         height: '48dp'
         md_bg_color: app.theme_cls.primary_dark
         MDIconButton:
-            icon: app.type_options[app.type]['icon']
+            icon: app.bot.icon if app.bot else 'crosshairs-question'
             theme_text_color: "ContrastParentBackground"
-            on_release: app.change_type()
-        MDLabel:
+            on_release: app.choose_bot()
+        CustomMDLabelButton:
             text: app.status
             theme_text_color: "ContrastParentBackground"
+            on_release: app.open_status()
         MDLabel:
             size_hint_x: None
-            text: "{}".format(datetime.utcfromtimestamp(app.timer).strftime('%H:%M:%S'))
+            text: datetime.utcfromtimestamp(app.timer).strftime('%H:%M:%S')
             theme_text_color: "Custom"
             text_color: (0,0,0,.8)
             width: '64dp'
         MDIconButton:
             icon: "play"
             theme_text_color: "Custom"
-            text_color: (0,0,0,.5) if app.running else (0,0,0,1)
-            on_release:
-                root.first_run_animation_start() if not app.first_run_animation_completed else root.start_stop(True)
+            text_color: (0,0,0,.5) if app.state == 'work' else (0,0,0,1)
+            on_release: app.start()
         MDIconButton:
             icon: "coffee"
             theme_text_color: "Custom"
-            text_color: (0,0,0,1) if app.running else (0,0,0,.5)
-            on_release: root.start_stop(False)
+            text_color: (0,0,0,1) if app.state == 'work' else (0,0,0,.5)
+            on_release: app.request_break()
 
     MDTabs:
         id: tabs
@@ -46,122 +47,122 @@
         Tab:
             padding: [0, 0]
             title: "Действия"
-            ActionTab:
-                id: action_tab
+            TaskTab:
+                id: task_tab
 
         Tab:
             title: "Логи"
             orientation: "vertical"
             spacing: "5dp"
 
-#            MDBoxLayout:
-#                size_hint_y: None
-#                height: "50dp"
-#                MDBoxLayout:
-#                    orientation: "vertical"
-#                    size_hint_x: None
-#                    width: "32dp"
-#                    Widget:
-#                        size_hint_y: None
-#                        height: "9dp"
-#                    MDGridLayout:
-#                        cols: 2
-##                        spacing: [0, dp(5)]
-#                        MiniCheckBox:
-#                            font_size: "16sp"
-#                            user_font_size: "16sp"
-#                            pos_hint: {'center_x': .5}
-#                            size_hint_x: .5
-#                            selected_color: [.28, .60, .92, 1]
-#                            checkbox_icon_normal: "numeric-1-circle-outline"
-#                            checkbox_icon_down: "numeric-1-circle-outline"
-#                        MiniCheckBox:
-#                            font_size: "16sp"
-#                            user_font_size: "16sp"
-#                            pos_hint: {'center_x': .5}
-#                            size_hint_x: .5
-#                            selected_color: [.94, .45, .15, 1]
-#                            checkbox_icon_normal: "numeric-2-circle-outline"
-#                            checkbox_icon_down: "numeric-2-circle-outline"
-#                        MiniCheckBox:
-#                            font_size: "16sp"
-#                            user_font_size: "16sp"
-#                            pos_hint: {'center_x': .5}
-#                            size_hint_x: .5
-#                            selected_color: [1, 0, 0, 1]
-#                            checkbox_icon_normal: "numeric-3-circle-outline"
-#                            checkbox_icon_down: "numeric-3-circle-outline"
-#                        MiniCheckBox:
-#                            font_size: "16sp"
-#                            user_font_size: "16sp"
-#                            pos_hint: {'center_x': .5}
-#                            size_hint_x: .5
-#                            selected_color: [.31, .78, .47, 1]
-#                            checkbox_icon_normal: "numeric-4-circle-outline"
-#                            checkbox_icon_down: "numeric-4-circle-outline"
-#                    Widget:
-#                        size_hint_y: None
-#                        height: "10dp"
-#                MDLabel:
-#                    halign: "center"
-#                    size_hint_x: .13
-#                    text: "Дата/время"
-#                MDLabel:
-#                    halign: "center"
-#                    size_hint_x: .16
-#                    text: "Ник"
-#                MDLabel:
-#                    halign: "center"
-#                    size_hint_x: .13
-#                    text: "Айди сделки"
-#                MDLabel:
-#                    halign: "center"
-#                    size_hint_x: None
-#                    width: "32dp"
-#                    text: ""
-#                MDLabel:
-#                    halign: "center"
-#                    size_hint_x: .5
-#                    text: "Текст"
-#
-#            RecycleView:
-#                id: logs_box
-#                scroll_type: ['bars', 'content']
-#                viewclass: 'LogBox'
-#                RecycleBoxLayout:
-#                    default_size: None, dp(32)
-#                    default_size_hint: 1, None
-#                    size_hint_y: None
-#                    height: self.minimum_height
-#                    orientation: 'vertical'
-#
-#            MDBoxLayout:
-#                adaptive_height: True
-#                size_hint_y: None
-#                spacing: "5dp"
-#                Widget:
-#                    size_hint_x: .5
-#                DatetimeTextInput:
-#                    id: log_start
-#                    size_hint_x: .25
-#                    text: str(root.log_start)
-#                    foreground_color: (1,1,1,1)
-#                DatetimeTextInput:
-#                    id: log_finish
-#                    size_hint_x: .25
-#                    text: str(root.log_finish)
-#                    foreground_color: (1,1,1,1)
-#                MDRectangleFlatIconButton:
-#                    text: "Обновить логи"
-#                    icon: "refresh"
-#                    on_release: root.update_logs()
+            MDBoxLayout:
+                size_hint_y: None
+                height: "50dp"
+                MDBoxLayout:
+                    orientation: "vertical"
+                    size_hint_x: None
+                    width: "32dp"
+                    Widget:
+                        size_hint_y: None
+                        height: "9dp"
+                    MDGridLayout:
+                        cols: 2
+#                        spacing: [0, dp(5)]
+                        MiniCheckBox:
+                            font_size: "16sp"
+                            user_font_size: "16sp"
+                            pos_hint: {'center_x': .5}
+                            size_hint_x: .5
+                            selected_color: [.28, .60, .92, 1]
+                            checkbox_icon_normal: "numeric-1-circle-outline"
+                            checkbox_icon_down: "numeric-1-circle-outline"
+                        MiniCheckBox:
+                            font_size: "16sp"
+                            user_font_size: "16sp"
+                            pos_hint: {'center_x': .5}
+                            size_hint_x: .5
+                            selected_color: [.94, .45, .15, 1]
+                            checkbox_icon_normal: "numeric-2-circle-outline"
+                            checkbox_icon_down: "numeric-2-circle-outline"
+                        MiniCheckBox:
+                            font_size: "16sp"
+                            user_font_size: "16sp"
+                            pos_hint: {'center_x': .5}
+                            size_hint_x: .5
+                            selected_color: [1, 0, 0, 1]
+                            checkbox_icon_normal: "numeric-3-circle-outline"
+                            checkbox_icon_down: "numeric-3-circle-outline"
+                        MiniCheckBox:
+                            font_size: "16sp"
+                            user_font_size: "16sp"
+                            pos_hint: {'center_x': .5}
+                            size_hint_x: .5
+                            selected_color: [.31, .78, .47, 1]
+                            checkbox_icon_normal: "numeric-4-circle-outline"
+                            checkbox_icon_down: "numeric-4-circle-outline"
+                    Widget:
+                        size_hint_y: None
+                        height: "10dp"
+                MDLabel:
+                    halign: "center"
+                    size_hint_x: .13
+                    text: "Дата/время"
+                MDLabel:
+                    halign: "center"
+                    size_hint_x: None
+                    width: "32dp"
+                    text: ""
+                MDLabel:
+                    halign: "center"
+                    size_hint_x: .80
+                    text: "Текст"
+
+            RecycleView:
+                id: logs_box
+                scroll_type: ['bars', 'content']
+                viewclass: 'LogBox'
+                RecycleBoxLayout:
+                    default_size: None, dp(32)
+                    default_size_hint: 1, None
+                    size_hint_y: None
+                    height: self.minimum_height
+                    orientation: 'vertical'
+
+            MDBoxLayout:
+                adaptive_height: True
+                size_hint_y: None
+                spacing: "5dp"
+                Widget:
+                    size_hint_x: .5
+                DatetimeTextInput:
+                    id: log_start
+                    size_hint_x: .25
+                    text: str(root.log_start)
+                    foreground_color: (1,1,1,1)
+                DatetimeTextInput:
+                    id: log_finish
+                    size_hint_x: .25
+                    text: str(root.log_finish)
+                    foreground_color: (1,1,1,1)
+                MDRectangleFlatIconButton:
+                    text: "Обновить логи"
+                    icon: "refresh"
+                    on_release: root.update_logs()
 
         Tab:
-            title: "Настройки"
-            SettingTab:
+            title: "Настройки бота"
+            BotSettingTab:
+                id: bot_settings
+
+        Tab:
+            title: "Настройки платформы"
+            AppSettingTab:
+                id: app_settings
 
 <Tab@MDBoxLayout+MDTabsBase>
     padding: "5dp"
+
+<CustomMDLabelButton@ButtonBehavior+MDLabel>
 
 
 <LogBox>
@@ -178,34 +179,8 @@
         text_size: self.size
         valign: 'middle'
         halign: 'center'
-    Button:
-        background_color: (1,1,1,0)
-        background_normal: ""
-        size_hint_x: .15
-        text: root.character
-        text_size: self.width, None
-        valign: 'center'
-        halign: 'left'
-    Widget:
-        size_hint_x: .01
-    Button:
-        background_color: (1,1,1,0)
-        background_normal: ""
-        size_hint_x: .12
-        text: root.trade_id
-        text_size: self.width, None
-        valign: 'middle'
-        halign: 'center'
-    Button:
-        size_hint_x: None
-        background_normal: "images/test/1.png"
-        background_down: "images/test/1.png"
-        border: [0,0,0,0]
-        width: self.height
-    Widget:
-        size_hint_x: .01
     MDLabel:
-        size_hint_x: .50
+        size_hint_x: .80
         text: root.text
         valign: 'center'
         halign: 'left'
@@ -220,3 +195,8 @@
     multiline: False
     valign: 'middle'
     halign: 'center'
+
+
+<BotChangeItem>
+    IconLeftWidget:
+        icon: root.icon
