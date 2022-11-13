@@ -44,6 +44,7 @@ class Database:
             """
             CREATE TABLE IF NOT EXISTS deals_history(
                 date INT NOT NULL PRIMARY KEY,
+                id BOOL NOT NULL,
                 completed BOOL NOT NULL,
                 error TEXT DEFAULT "",
                 item TEXT NOT NULL,
@@ -204,3 +205,18 @@ class Database:
             """)
 
         return self.cur.fetchone()['image']
+
+    def get_last_deals(self, qty=10):
+
+        self.cur.execute(
+            """
+            SELECT 
+                id
+            FROM
+                deals_history
+            ORDER BY date DESC LIMIT ?
+            """,
+            (qty,)
+            )
+
+        return [r['id'] for r in self.cur.fetchall()]

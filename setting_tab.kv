@@ -140,7 +140,7 @@
                     if bot_break.value is not None else "", self.text])
         SettingRow:
             id: debug
-            text: "Дебаг (не запускать следующий этап)"
+            text: "Debug (не запускать следующий этап)"
             type: "bool"
             MDBoxLayout:
                 size_hint_x: .45
@@ -149,6 +149,19 @@
                     active:
                         debug.value if debug.value is not None else False
                     on_active: debug.set_value(self.active)
+                    size_hint_x: None
+                    width: self.height
+        SettingRow:
+            id: test
+            text: "Тестовый прогон"
+            type: "bool"
+            MDBoxLayout:
+                size_hint_x: .45
+                Widget:
+                MDCheckbox:
+                    active:
+                        test.value if test.value is not None else False
+                    on_active: test.set_value(self.active)
                     size_hint_x: None
                     width: self.height
 

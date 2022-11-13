@@ -288,7 +288,8 @@ class VariablesBox(MDBoxLayout):
                         (app.bot.key,
                          vr.variable.key,
                          vr.variable.get_window_key(),
-                         ", ".join(vr.value.split(", ")[:3]) if vr.variable.type == 'template' else vr.value
+                         ", ".join(vr.value.split(", ")[:3]) if vr.variable.type in ['template', 'templates']
+                         else vr.value
                          )
                         for section in self.ids.variables_sections.children
                         for vr in section.ids.variables.children if vr.value
@@ -299,7 +300,8 @@ class VariablesBox(MDBoxLayout):
                          ", ".join(vr.value.split(", ")[3:])
                          )
                         for section in self.ids.variables_sections.children
-                        for vr in section.ids.variables.children if vr.value and vr.variable.type == 'template'
+                        for vr in section.ids.variables.children if (vr.value
+                                                                     and vr.variable.type in ['template', 'templates'])
                     ]
 
         app.db.save_bots_variable(variables)

@@ -133,9 +133,12 @@ class ControlPanelApp(MDApp):
         try:
             self.bot.set_empty_log()
             error = stage['func']()
+            if error:
+                self.bot.update_log(level=2, text=error)
         except Exception as e:
             error = str(e)
             self.error_detail = traceback.format_exc()
+            self.bot.update_log(details=self.error_detail, level=1, text=error)
 
         result = None
 
@@ -200,7 +203,8 @@ class ControlPanelApp(MDApp):
     @mainthread
     def on_complete_stage(self, obj, error=None):
 
-        if self.need_stop_task or self.s(self.bot.key, 'debug') or error is not None:  # Нужно остановить задачи
+        _debug = self.s(self.bot.key, 'debug')
+        if self.need_stop_task or _debug or error is not None:  # Нужно остановить задачи
             # Статус текущего этапа
             self.stages_box.set_current_status('error' if error else 'stopped')
 
@@ -221,12 +225,16 @@ class ControlPanelApp(MDApp):
             if error_text:
                 self.set_status(f"Ошибка: {error_text}", True, True)
                 self.bot.save_log()
+            elif _debug:
+                self.set_status(f"Остановлен: Debug (не запускать следующий этап)", True, True)
+            elif self.need_stop_task:
+                self.set_status(f"Остановлен: Вручную или по времени", True, True)
 
             if self.need_break:
                 self.request_break()
                 return
 
-            if goto and not self.s(self.bot.key, 'debug') and not self.need_stop_task:
+            if goto and not _debug and not self.need_stop_task:
                 self.start_stage(goto)
 
         else:  # Запускаем следующий этап

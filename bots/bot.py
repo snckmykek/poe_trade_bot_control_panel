@@ -6,6 +6,8 @@ from typing import Literal
 import cv2
 import numpy as np
 import pyautogui
+import requests
+from imutils.object_detection import non_max_suppression
 from kivy.event import EventDispatcher
 from kivy.properties import DictProperty
 from kivy.uix.widget import Widget
@@ -158,7 +160,7 @@ class Bot(EventDispatcher):
         self.log = {
             'date': int(datetime.datetime.now().timestamp()),
             'details': "",
-            'image': "",
+            'image': None,
             'level': 0,
             'text': ""
         }
@@ -176,6 +178,10 @@ class Bot(EventDispatcher):
         Сохранение словаря лога. Выполняется каждый раз, когда этап задачи завершается с ошибкой.
         Для наследуемых классов следует переопределить функцию.
         """
+        image = self.log.get('image')
+        if image is not None:
+            cv2.imwrite(f"images/screenshots/errors/{self.log['date']}.jpeg", image)
+
         self.app.db.save_log((
             self.name,
             self.log['date'],
@@ -183,10 +189,23 @@ class Bot(EventDispatcher):
             self.log['text'],
             self.log['details']
         ))
+
+    def update_log(self, details="", **kwargs):
+        """
+        Записывает значения в лог для ключей, дополняет детали.
+
+        :param details: Всегда дополняются предыдущие детали этапа,
+        :param kwargs: Перезаписывают ключи
+        """
+        self.log.update(kwargs)
+
+        if details:
+            self.log['details'] += '\n' + details
+
     # endregion
 
     # region Общие функции
-    def click_to(self, variable_key, offset_x=.5, offset_y=.5, clicks=1):
+    def click_to(self, variable_key, offset_x=.5, offset_y=.5, clicks=1, wait_template=True):
         """
         Кликает по координатам или найденному шаблону clicks раз с отступом от верхнего левого края offset_x и offset_y в пропорциях
         шаблона (offset_x=.5, offset_y=.5 означает клик в центр шаблона, значения могут превышать 1 или быть
@@ -201,17 +220,30 @@ class Bot(EventDispatcher):
             xywh = None
             while not xywh:
 
-                xywh = self.find_template(**variable_value)
+                if variable.type == 'template':
+                    mode: Literal['once', 'all'] = 'once'
+                else:
+                    mode: Literal['once', 'all'] = 'all'
+
+                xywh = self.find_template(**variable_value, mode=mode)
+
+                if not xywh and not wait_template:  # Если шаблона нет, то и не нужно на него кликать
+                    return
+
                 if self.stop():
                     raise TimeoutError(f"Не найден шаблон '{variable.name}'")
                 else:
                     time.sleep(.5)
 
-            x, y, w, h = xywh
+            if variable.type == 'template':
+                xywh = [xywh, ]
 
-            pyautogui.moveTo(to_global(variable_value['region'], [x + w * offset_x, y + h * offset_y]))
-            pyautogui.click(clicks=clicks)
-            time.sleep(.5)
+            for _xywh in xywh:
+                x, y, w, h = _xywh
+
+                pyautogui.moveTo(to_global(variable_value['region'], [x + w * offset_x, y + h * offset_y]))
+                pyautogui.click(clicks=clicks)
+                time.sleep(.3)
 
         elif isinstance(variable, Coord):  # Координаты
             if variable.type == 'coord':
@@ -222,45 +254,134 @@ class Bot(EventDispatcher):
                 for coord in variable_value:
                     pyautogui.moveTo(coord)
                     pyautogui.click(clicks=clicks)
-                    time.sleep(.5)
+                    time.sleep(.3)
 
     # Найти по шаблону
-    def find_template(self, region, path, size, accuracy=.7):
+    def find_template(self, region, path, size, accuracy=.9, mode: Literal['once', 'all'] = 'once', use_mask=False,
+                      is_item=False):
         """
-        :param region: Область для скриншота в глобальных координатах в пикселях
-        :param path: Путь до шаблона, будет использован путь: images/templates/{path}
-        :param size: Размер шаблона в пикселях, к которому нужно привести полученный шаблон
-        :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.7 - 0.9
-        :return: [x, y, w, h] (x,y - левый верхний угол совпадения шаблона, w,h - ширина и высота шаблона)
+        :param is_item: Если это предмет, добавляем в маску область, где указано количество, чтобы не учитывать
+            при поиске по шаблону,
+        :param use_mask: Нужно ли использовать маску по альфа-каналу (то есть для прозрачных пнгшек та область, где
+            картинка прозрачная, будет всегда совпадение True),
+        :param mode: 'once' - возвращает шаблон координаты с максимально подходящим совпадением, 'all' - список
+            координат всех найденных шаблонов (с учетом очистки от наложения, то есть в отдельных областях),
+        :param region: Область для скриншота в глобальных координатах в пикселях,
+        :param path: Путь до шаблона (будет использован путь: images/templates/{path}) или  полная url,
+        :param size: Размер шаблона в пикселях, к которому нужно привести полученный шаблон,
+        :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.9,
+        :return: [x, y, w, h] (x,y - левый верхний угол совпадения шаблона, w, h - ширина и высота шаблона)
         """
 
-        pyautogui.moveTo(1, 1)
-        img_rgb = pyautogui.screenshot(region=region)
-        img_gray = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2GRAY)
-        template = cv2.imread(f"images/templates/{path}", 0)
+        # 1. Подготовка шаблона
+        if path.startswith("http"):  # Это url
+            template_b = requests.get(path).content
+            template = np.asarray(bytearray(template_b), dtype="uint8")
+            template = cv2.imdecode(template, cv2.IMREAD_UNCHANGED)
+        else:
+            template = cv2.imread(f"images/templates/{path}", cv2.IMREAD_UNCHANGED)
+
         template = cv2.resize(template, size)
-        res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
 
-        if self.app.s(self.key, 'debug'):
-            print(path, res.max())  # !
+        template_size = template.shape[:2]
+        if use_mask:
 
-        if res.max() < accuracy:
-            self.log.update({'image': img_rgb})
+            mask = np.zeros(template_size).astype('uint8')
+            for y in range(template_size[0]):
+                for x in range(template_size[1]):
+                    if is_item and y < template_size[0] * .4 and x < template_size[1] * .5:
+                        # Добавляем в маску область, где указано количество, чтобы не учитывать при поиске по шаблону
+                        mask[y][x] = 0
+                    else:
+                        mask[y][x] = template[y][x][3]
+        else:
+            mask = None
+
+        template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+        # Редактирование точности (алгоритм поиска светлые картинки на светлом фоне выделяет сильнее)
+        # Все пиксели, кроме пустых (они будут вырезаны маской) и черных (так уж получилось, но это не влияет)
+        avg_value = np.average(template[template != 0])
+        if avg_value < 40:
+            accuracy -= .03
+        elif avg_value > 100:
+            accuracy += .03
+        else:
+            accuracy += (avg_value - 70) / 1000
+
+        # 2. Поиск
+        pyautogui.moveTo(1, 1)
+        img_rgb = np.array(pyautogui.screenshot(region=region))
+        img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+
+        result = cv2.matchTemplate(img_gray, template, cv2.TM_CCORR_NORMED, mask=mask)
+
+        # При использовании маски значения могут быть 'бесконечность', отсекаем
+        result[np.isnan(result)] = 0
+        result[np.isinf(result)] = 0
+
+        # region test
+        # result2 = cv2.matchTemplate(img_gray, template, cv2.TM_SQDIFF_NORMED, mask=mask)
+        # result2[np.isnan(result)] = 0
+        # result2[np.isinf(result)] = 0
+        # result3 = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED, mask=mask)
+        # result3[np.isnan(result)] = 0
+        # result3[np.isinf(result)] = 0
+        #
+        # cv2.imshow(
+        #     f'TM_CCORR_NORMED {result.max()}, TM_SQDIFF_NORMED {result2.max()}, TM_CCOEFF_NORMED {result3.max()}',
+        #     np.concatenate(
+        #         [
+        #             result,
+        #             result2,
+        #             result3
+        #         ]
+        #     )
+        # )
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        # endregion
+
+        if result.max() < accuracy:
+            self.log.update({'image': img_gray})
             return
 
-        coord = cv2.minMaxLoc(res)[-1]
-        return [*coord, template.shape[1], template.shape[0]]
+        if mode == 'once':  # Возвращаем координаты максимально совпадающего шаблона
+            if self.app.s(self.key, 'debug'):
+                print(path, result.max())
 
-    def wait_for_template(self, template_name):
+            coord = cv2.minMaxLoc(result)[-1]
+            return [*coord, *template_size[::-1]]  # template_size указан как [y, x] - меняем местами
+        elif mode == 'all':  # Очищаем от наложения и возвращаем список координат всех найденных шаблонов
+
+            # Получаем все совпадения с необходимой точностью совпадения
+            coords = sorted(list(zip(*np.where(result >= accuracy))), reverse=True)
+
+            # Отсекаем пересекающиеся области, оставляем только уникальные
+            pick = non_max_suppression(np.array(
+                [(x, y, x + template_size[1], y + template_size[0]) for (y, x) in coords]))
+
+            if self.app.s(self.key, 'debug'):
+                print(path, len(pick), result.max())
+
+                for p in pick:
+                    cv2.rectangle(img_gray, p[:2], p[-2:], 255, 2)
+
+                cv2.imwrite(f"images/screenshots/errors/{self.log['date']}_debug.jpeg", img_gray)
+
+            return [[start_x, start_y, end_x - start_x, end_y - start_y] for (start_x, start_y, end_x, end_y) in pick]
+
+    def wait_for_template(self, template_name, timeout=0):
         """Ищет по шаблону пока не найдет или не нужно будет завершать задачу"""
 
         template_settings = self.v(template_name)
 
+        _start = datetime.datetime.now()
         while True:
             if self.find_template(**template_settings):
                 return
 
-            if self.stop():
+            if self.stop() or (timeout and (datetime.datetime.now() - _start).total_seconds() > timeout):
                 raise TimeoutError(f"Не найден шаблон '{self._variables[template_name].name}'")
             else:
                 time.sleep(.5)
@@ -632,7 +753,7 @@ class Template(Variable):
     region: Coord
 
     verifiable = {
-        'type': ['template', ]
+        'type': ['template', 'templates']
     }
 
     """Значение выражено долями единицы относительно высоты окна"""
@@ -721,8 +842,8 @@ class Template(Variable):
                 cv2.imwrite(
                     os.path.join(templates_path, template_name),
                     img[
-                        rectangles['r']['xywh'][1]:rectangles['r']['xywh'][1] + rectangles['r']['xywh'][-1],
-                        rectangles['r']['xywh'][0]:rectangles['r']['xywh'][0] + rectangles['r']['xywh'][-2]
+                    rectangles['r']['xywh'][1]:rectangles['r']['xywh'][1] + rectangles['r']['xywh'][-1],
+                    rectangles['r']['xywh'][0]:rectangles['r']['xywh'][0] + rectangles['r']['xywh'][-2]
                     ]
                 )
 

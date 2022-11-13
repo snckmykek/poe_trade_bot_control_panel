@@ -3,7 +3,6 @@ import os
 import random
 import threading
 import time
-import traceback
 from datetime import datetime
 from operator import itemgetter
 
@@ -14,15 +13,13 @@ import numpy as np
 import requests
 import win32gui
 from kivy.properties import DictProperty, ListProperty, NumericProperty
-from kivymd.uix.button import MDFlatButton, MDRectangleFlatIconButton
-from kivymd.uix.dialog import MDDialog
+from kivymd.uix.button import MDRectangleFlatIconButton
 from kivymd.uix.snackbar import Snackbar
 from win32api import GetSystemMetrics
 from kivy.clock import Clock
-from kivymd.app import MDApp
 
 from bots.bot import Bot, Coord, Simple, Template, get_window_param
-from bots.common import CustomDialog
+from bots.common import CustomDialog, image_to_int
 from bots.poe_buyer.db_requests import Database
 from bots.poe_buyer.additional_functional import Content, Items
 
@@ -35,6 +32,7 @@ class PoeBuyer(Bot):
 
     # Кастомные
     current_deal: dict = DictProperty({
+        'id': "",
         'character_name': "",
         'available_item_stock': 0,
         'exchange_currency': "chaos",
@@ -50,6 +48,7 @@ class PoeBuyer(Bot):
     stat: dict = DictProperty({'good': 0, 'missed': 0, 'bad': 0})
     swag: dict = DictProperty({'chaos': 0, 'divine': 0})
     tabs: list
+    trade_thread: threading.Thread = None
 
     def __init__(self):
         super(PoeBuyer, self).__init__()
@@ -136,7 +135,7 @@ class PoeBuyer(Bot):
                         'name': "Подобрать и установить текущую сделку"
                     },
                     {
-                        'func': self.deal_request,
+                        'func': self.request_deal,
                         'on_error': {'goto': (3, 0)},
                         'name': "Отправить запрос и ждать пати"
                     },
@@ -155,6 +154,10 @@ class PoeBuyer(Bot):
                 'timer': 120,
                 'available_mode': 'always',
                 'stages': [
+                    {
+                        'func': self.test_find_chaos,
+                        'name': "Тест найти хаосы в инвентаре"
+                    },
                     {
                         'func': self.wait_trade,
                         'name': "Ждать трейд"
@@ -188,6 +191,11 @@ class PoeBuyer(Bot):
 
         self.variables_setting = {
             'Данные аккаунта': [
+                Simple(
+                    key='test_item',
+                    name="test_item",
+                    type='str'
+                ),
                 Simple(
                     key='login',
                     name="Логин бота",
@@ -305,6 +313,22 @@ class PoeBuyer(Bot):
                     type='coord_list',
                     window='poe'
                 ),
+                Coord(
+                    key='coord_chaos',
+                    name="Координаты ячейки Chaos orb",
+                    relative=True,
+                    snap_mode='lt',
+                    type='coord',
+                    window='poe'
+                ),
+                Coord(
+                    key='coord_divine',
+                    name="Координаты ячейки Divine orb",
+                    relative=True,
+                    snap_mode='lt',
+                    type='coord',
+                    window='poe'
+                ),
                 Template(
                     key='template_game_loaded',
                     name=
@@ -348,6 +372,83 @@ class PoeBuyer(Bot):
                         window='poe'
                     ),
                     relative=False,
+                    type='template',
+                    window='poe'
+                ),
+                Template(
+                    key='template_accept',
+                    name="Кнопка 'ACCEPT' при принятии пати или трейда",
+                    region=Coord(
+                        key='region_accept',
+                        name="",
+                        relative=True,
+                        snap_mode='rt',
+                        type='region',
+                        window='poe'
+                    ),
+                    relative=True,
+                    type='template',
+                    window='poe'
+                ),
+                Coord(
+                    key='region_inventory_fields',
+                    name="Поле ячеек инвентаря (как можно точнее по краю внешних ячеек)",
+                    relative=True,
+                    snap_mode='rt',
+                    type='region',
+                    window='poe'
+                ),
+                Coord(
+                    key='region_trade_inventory_fields_my',
+                    name="Поле ячеек трейда (мои)",
+                    relative=True,
+                    snap_mode='lt',
+                    type='region',
+                    window='poe'
+                ),
+                Coord(
+                    key='region_trade_inventory_fields_seller',
+                    name="Поле ячеек трейда (продавца)",
+                    relative=True,
+                    snap_mode='lt',
+                    type='region',
+                    window='poe'
+                ),
+                Coord(
+                    key='coord_complete_trade',
+                    name="Координаты кнопки для завершения трейда",
+                    relative=True,
+                    snap_mode='lt',
+                    type='coord',
+                    window='poe'
+                ),
+                Template(
+                    key='template_x_button',
+                    name="Кнопка 'X' на сообщениях в инвентаре (когда пати приняли и тд)",
+                    region=Coord(
+                        key='region_x_button',
+                        name="",
+                        relative=True,
+                        snap_mode='rt',
+                        type='region',
+                        window='poe'
+                    ),
+                    relative=True,
+                    type='templates',
+                    window='poe'
+                ),
+                Template(
+                    key='template_empty_field',
+                    name="Пустая ячейка инвентаря",
+                    region=Coord(
+                        key='region_empty_field',
+                        name="",
+                        relative=True,
+                        snap_mode='lt',
+                        type='region',
+                        window='poe'
+                    ),
+                    relative=True,
                     type='template',
                     window='poe'
                 ),
@@ -412,9 +513,9 @@ class PoeBuyer(Bot):
 
             time.sleep(2)
 
-            _window_xywh = get_window_param(window_name)
+            _window_xywh = get_window_param('poe')
             # Только когда в одном и том же месте окно находится - всё ок
-            if _window_xywh and window_xywh == _window_xywh:
+            if _window_xywh and window_xywh and window_xywh == _window_xywh:
                 # Выводим на передний план окно (но расположение слетает в 0,0)
                 hwnd = win32gui.FindWindow(None, window_name)
                 win32gui.SetForegroundWindow(hwnd)
@@ -453,7 +554,9 @@ class PoeBuyer(Bot):
 
     # region Продажа. Запросы на ПОЕ трейд
     def start_poe_trade(self):
-        threading.Thread(target=lambda *_: self.poetrade_loop(), daemon=True).start()
+        if not self.trade_thread or not self.trade_thread.is_alive():
+            self.trade_thread = threading.Thread(target=lambda *_: self.poetrade_loop(), daemon=True)
+            self.trade_thread.start()
 
     def poetrade_loop(self):
         self.update_tabs_and_swag()
@@ -727,7 +830,7 @@ class PoeBuyer(Bot):
     # endregion
 
     # region Выход из ПОЕ на перерыв
-    def logout(self):
+    def close_poe(self):
         window_name = "Path of Exile"
         while True:
             if self.stop():
@@ -765,9 +868,9 @@ class PoeBuyer(Bot):
     def set_current_deal(self):
         current_deal = self.deals.pop(0)
         # TODO: чекнуть на актуальность сделки, пока берем как есть
-        while current_deal['id'] in variables['last_10_completed_deals']:
-            current_deal = variables['deals'].pop(0)
-        available_c = variables['swag']['chaos'] + variables['swag']['divine'] * variables['divine_price']
+        while self.deal_completed(current_deal['id']):
+            current_deal = self.deals.pop(0)
+        available_c = self.swag['chaos'] + self.swag['divine'] * self.divine_price
 
         deal_item_amount = 0
         deal_exchange_amount = 0
@@ -780,8 +883,8 @@ class PoeBuyer(Bot):
         if deal_item_amount == 0:
             return f"Количество для покупки: 0. ID сделки: {current_deal['id']}"
 
-        current_deal.update({'divine_qty': deal_exchange_amount // variables['divine_price'],
-                             'chaos_qty': deal_exchange_amount % variables['divine_price']})
+        current_deal.update({'divine_qty': deal_exchange_amount // self.divine_price,
+                             'chaos_qty': deal_exchange_amount % self.divine_price})
 
         current_deal.update({'deal_item_amount': deal_item_amount, 'deal_exchange_amount': deal_exchange_amount})
 
@@ -791,157 +894,219 @@ class PoeBuyer(Bot):
                                                                                                  'divine_qty'] == 0
             else "{0} Divine Orb and {1} Chaos Orb".format(current_deal['divine_qty'], current_deal['chaos_qty']))
 
-        variables['current_deal'] = current_deal
+        self.current_deal = current_deal
 
-    def deal_request():
-        if _is_test:
-            print(variables['current_deal']['whisper'])
+    def deal_completed(self, deal_id):
+        return deal_id in self.db.get_last_deals(100)
+
+    def request_deal(self):
+        if self.app.s('test'):
+            print(self.current_deal['whisper'])
         else:
-            send_to_chat(variables['current_deal']['whisper'])
+            self.send_to_chat(self.current_deal['whisper'])
 
-        # ! Ожидание пати
-        # template = variables['template_accept']
-        # if not click_to_template(window_xywh, template, clicks=1):
-        #     return f"Не дождались пати или не найден шаблон {template} на экране в области {window_xywh}"
+        self.click_to('template_accept')
 
-    def take_currency():
-        if not _open_stash():
-            return "Не смог открыть стеш"
+    def take_currency(self):
 
-        close_x_tabs()
+        # region test
+        self.swag.update({
+            'divine': 50,
+            'chaos': 154,
+        })
+        self.current_deal.update({
+            'divine_qty': 12,
+            'chaos_qty': 133,
+        })
+        # endregion
 
-        if not currency_put_in():
+        self.open_stash()
+
+        if not self.currency_put_in():
             return "Не смог выложить валюту из стеша"
 
-        currency_from_stash(variables['current_deal']['divine_qty'], 'divine')
-        currency_from_stash(variables['current_deal']['chaos_qty'], 'chaos')
+        self.currency_from_stash(self.current_deal['divine_qty'], 'divine')
+        self.currency_from_stash(self.current_deal['chaos_qty'], 'chaos')
 
-    def currency_put_in(is_trade=False):
-        region = to_global(variables['region_inventory_fields']['value'])
-
-        cell_size = [int(region[3] / 5), int(region[2] / 12)]  # y, x
+    def currency_put_in(self, is_trade=False):
+        region = self.v('region_inventory_fields')
 
         attempts = 3
         while attempts:
-            cells_matrix = get_cells_matrix(region)
+
+            self.close_x_tabs()
+
+            cells_matrix = self.get_cells_matrix(region)
             non_empty_cells = list(zip(*np.where(cells_matrix == 0)))
 
             if not non_empty_cells:
-                return True
+                return
 
             pyautogui.keyDown('ctrl')
-            for cell in non_empty_cells:
-                pyautogui.moveTo(region[0] + cell[1] * cell_size[1] + cell_size[1] / 2,
-                                 region[1] + cell[0] * cell_size[0] + cell_size[0] / 2,
-                                 .1)  # x, y
+            for y, x in non_empty_cells:
+                pyautogui.moveTo(int(region[0] + region[2] * (x + 0.5) / 12),
+                                 int(region[1] + region[3] * (y + 0.5) / 5),
+                                 .1)
                 pyautogui.click()
             pyautogui.keyUp('ctrl')
 
+            # При трейде валюта не исчезает из инвентаря. Проверяем, что в трейд-окне столько же занятых ячеек
             if is_trade:
-                return True
+                trade_cells_matrix = self.get_cells_matrix(self.v('region_trade_inventory_fields_my'))
+                trade_non_empty_cells = list(zip(*np.where(trade_cells_matrix == 0)))
+                if len(non_empty_cells) == len(trade_non_empty_cells):
+                    return
 
             attempts -= 1
 
-        return False
+        raise TimeoutError(f"Не смог выложить валюту с 3 попыток")
 
-    def get_cells_matrix(region):
-        img_rgb = pyautogui.screenshot(region=region)
-        img_gray = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2GRAY)
-        template_settings = variables['template_empty_field']
-        template = cv2.imread(f"images/templates/{template_settings['path']}", 0)
-        if template_settings['relative']:
-            template = cv2.resize(template, to_pixels(template_settings['size']))
+    def get_cells_matrix(self, region, item=None):
+        """
+        Возвращает 2-мерную матрицу, где 0 - пустая ячейка, 1 - заполненная
+        :param item:
+        :param region:
+        :return:
+        """
 
-        result = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
+        if item:
+            item_size = [int(region[-2] / 12), int(region[-1] / 5)]
+            coords = self.find_template(
+                region, f"https://web.poecdn.com{self.db.get_poe_item_image(item)}",
+                item_size, mode='all', use_mask=True, is_item=True
+            )
+        else:
+            template_settings = self.v('template_empty_field')
+            coords = self.find_template(region, template_settings['path'], template_settings['size'], mode='all')
 
-        coords = zip(*np.where(result >= .7))
         cell_size = [int(region[3] / 5), int(region[2] / 12)]
         inventory_cells = np.zeros([5, 12])
-        for y, x in coords:
+        for x, y, w, h in coords:
             index_y = math.floor((y + cell_size[0] / 2) / cell_size[0])
             index_x = math.floor((x + cell_size[1] / 2) / cell_size[1])
             inventory_cells[index_y][index_x] = 1
 
         return inventory_cells
 
-    def close_x_tabs():
-        inventory_fields_xywh = to_global(variables['region_inventory_fields']['value'])
-        region_w = window_xywh[-2] * 0.975
-        # Участок 2.5% от правого края экрана, закрывающий правый край ячеек инвентаря
-        region = (window_xywh[0] + region_w, inventory_fields_xywh[1], region_w, inventory_fields_xywh[-1])
+    def close_x_tabs(self):
+        self.click_to('template_x_button', wait_template=False)
+
+    def currency_from_stash(self, amount, currency):
+
+        while True:
+
+            if not amount:
+                return
+
+            if currency == 'divine':
+                currency_coord = self.v('coord_divine')
+                stack = self.swag['divine']
+            elif currency == 'chaos':
+                currency_coord = self.v('coord_chaos')
+                stack = self.swag['chaos']
+            else:
+                raise ValueError(f"Неверно указана валюта: '{currency}'")
+
+            if stack < amount:
+                raise ValueError(f"Недостаточно валюты '{currency}': всего {stack}, требуется {amount}")
+
+            stack_size = 10
+            inv_region = self.v('region_inventory_fields')
+
+            if stack - amount == 0:
+                pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
+                pyautogui.keyDown('ctrl')
+                pyautogui.click(clicks=(math.ceil(amount // stack_size)), interval=.2)
+                pyautogui.keyUp('ctrl')
+
+            else:
+                pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
+                pyautogui.keyDown('ctrl')
+                pyautogui.click(clicks=math.floor(amount // stack_size), interval=.2)
+                pyautogui.keyUp('ctrl')
+                if amount % stack_size != 0:
+                    cells_matrix = self.get_cells_matrix(inv_region)
+                    empty_cell = sorted(list(zip(*np.where(cells_matrix == 1))), key=itemgetter(1))[0]
+
+                    pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
+                    pyautogui.keyDown('Shift')
+                    pyautogui.click()
+                    pyautogui.keyUp('Shift')
+                    pyautogui.write(f'{amount % stack_size}')
+                    pyautogui.press('Enter')
+                    pyautogui.moveTo(int(inv_region[0] + inv_region[2] * (empty_cell[1] + 0.5) / 12),
+                                     int(inv_region[1] + inv_region[3] * (empty_cell[0] + 0.5) / 5),
+                                     .2)
+                    time.sleep(.1)
+                    pyautogui.click()
+
+            if amount == self.count_items(inv_region, currency):
+                return
+            else:
+                if self.app.s(self.key, 'debug'):
+                    print("Выложил неверное количество валюты")
+
+            if self.stop():
+                raise TimeoutError(f"Не смог выложить валюту '{currency}' в количестве: {amount}")
+
+    def count_items(self, region, item):
+        self.close_x_tabs()
+
+        cells_matrix = self.get_cells_matrix(region, item)
+        cells = list(zip(*np.where(cells_matrix == 1)))
 
         pyautogui.moveTo(1, 1)
-        img_rgb = pyautogui.screenshot(region=region)
-        img_gray = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2GRAY)
-        template_settings = variables['template_x_tab']
-        template = cv2.imread(f"images/templates/{template_settings['path']}", 0)
-        if template_settings['relative']:
-            template = cv2.resize(template, to_pixels(template_settings['size']))
+        inventory = np.array(pyautogui.screenshot(region=region))
+        h = inventory.shape[0] / 5
+        w = inventory.shape[1] / 12
+        qty = 0
 
-        result = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
+        for y, x in cells:
+            _qty = image_to_int(inventory[int(y * h): int((y + .4) * h), int(x * w): int((x + .5) * w)], 150)
+            if _qty == 0:  # На предметах, где максимальный стак - 1, нет вообще цифр
+                _qty = 1
 
-        coords = zip(*np.where(result >= .7))
-        for y, x in coords:
-            pyautogui.moveTo(region[0] + x + template.shape[1] / 2, region[1] + y + template.shape[0] / 2, .1)
-            pyautogui.click()
+            qty += _qty
 
-            time.sleep(.1)
+        return qty
 
-    def currency_from_stash(amount, currency):
-        region = to_global(variables['region_inventory_fields']['value'])
-
-        cell_size = [int(region[3] / 5), int(region[2] / 12)]  # y, x
-
-        if currency == 'divine':
-            currency_coord = to_global(variables['coord_divine']['value'])
-            stack = variables['swag']['divine']
-        elif currency == 'chaos':
-            currency_coord = to_global(variables['coord_chaos']['value'])
-            stack = variables['swag']['chaos']
-        else:
-            return False
-
-        stack_size = 10
-
-        if stack - amount == 0:
-            pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
-            pyautogui.keyDown('ctrl')
-            pyautogui.click(clicks=(math.ceil(amount // stack_size)), interval=.2)
-            pyautogui.keyUp('ctrl')
-            return
-
-        pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
-        pyautogui.keyDown('ctrl')
-        pyautogui.click(clicks=math.floor(amount // stack_size), interval=.2)
-        pyautogui.keyUp('ctrl')
-        if amount % stack_size != 0:
-            cells_matrix = get_cells_matrix(region)
-            empty_cell = sorted(list(zip(*np.where(cells_matrix == 1))), key=itemgetter(1))[0]
-            pyautogui.keyDown('Shift')
-            pyautogui.click()
-            pyautogui.write(f'{amount % stack_size}')
-            pyautogui.keyUp('Shift')
-            pyautogui.press('Enter')
-            pyautogui.moveTo(region[0] + empty_cell[1] * cell_size[1] + cell_size[1] / 2,
-                             region[1] + empty_cell[0] * cell_size[0] + cell_size[0] / 2,
-                             .1)  # x, y
-            time.sleep(.2)
-            pyautogui.click()
-
-    def teleport():
+    def teleport(self):
+        self.send_to_chat(f"/hideout {self.current_deal['character_name']}")
         time.sleep(2)
+        self.wait_for_template('template_game_loaded')  # Ждем загрузку
 
     # endregion
 
     # region Продажа. Сделка
-    def wait_trade():
-        time.sleep(2)
+    def wait_trade(self):
+        self.click_to('template_accept')
+        self.wait_for_template('template_trade', 5)
 
-    def put_currency():
-        time.sleep(2)
+    def put_currency(self):
+        self.currency_put_in(True)
 
-    def check_items():
-        time.sleep(2)
+    def check_items(self):
+        qty = 0
+        region = self.v('region_trade_inventory_fields_seller')
+        while self.current_deal['deal_item_amount'] > qty:
+            self.activate_items(region)
+
+            qty = self.count_items(self.current_deal['item_currency'])
+
+            if self.stop():
+                raise TimeoutError(
+                    f"Неверное количество предметов для сделки {qty} (нужно {self.current_deal['deal_item_amount']})")
+
+            self.click_to('coord_complete_trade')
+
+    def activate_items(self, region):
+        cells_matrix = self.get_cells_matrix(region)
+        non_empty_cells = list(zip(*np.where(cells_matrix == 0)))
+
+        for y, x in non_empty_cells:
+            pyautogui.moveTo(int(region[0] + region[2] * (x + 0.5) / 12),
+                             int(region[1] + region[3] * (y + 0.5) / 5),
+                             .1)
 
     def wait_confirm():
         variables['last_10_completed_deals'].insert(0, variables['current_deal']['id'])

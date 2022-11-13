@@ -187,12 +187,13 @@ class Database:
 
     def save_log(self, values: tuple):
         self.cur.execute(
-            f"""
+            """
             INSERT INTO
                 logs (bot_key, date, level, text, details)
             VALUES
-                {values}
-            """
+                (?,?,?,?,?)
+            """,
+            values
         )
         self.commit()
 
