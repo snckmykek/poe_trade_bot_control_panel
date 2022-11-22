@@ -47,10 +47,12 @@ class Database:
                 id BOOL NOT NULL,
                 completed BOOL NOT NULL,
                 error TEXT DEFAULT "",
+                last_stage TEXT NOT NULL,
                 item TEXT NOT NULL,
                 qty INT NOT NULL,
                 c_price REAL NOT NULL,
-                profit REAL NOT NULL
+                profit REAL NOT NULL,
+                deal_time INT DEFAULT 0
             ) 
             """)
 
@@ -98,6 +100,21 @@ class Database:
             VALUES
                 {','.join(map(str, values))}
             """
+        )
+        self.commit()
+
+    def change_item_qty(self, item, delta_qty):
+
+        self.cur.execute(
+            f"""
+            UPDATE
+                items
+            SET
+                max_qty = max_qty + ?
+            WHERE
+                item = ?
+            """,
+            [delta_qty, item]
         )
         self.commit()
 
@@ -205,6 +222,20 @@ class Database:
             """)
 
         return self.cur.fetchone()['image']
+
+    def save_deal_history(self, values):
+
+        self.cur.execute(
+            """
+            INSERT INTO 
+                deals_history
+            VALUES
+                (?,?,?,?,?,?,?,?,?,?)
+            """,
+            values
+        )
+
+        self.commit()
 
     def get_last_deals(self, qty=10):
 

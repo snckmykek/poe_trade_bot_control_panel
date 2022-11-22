@@ -53,7 +53,7 @@ class AppSettingTab(MDStackLayout):
             Snackbar(text=f"Не заполнены настройки: {','.join(errors)}").open()
             return
 
-        settings = [(app.bot.key,
+        settings = [('any',
                      key,
                      ",".join(setting_row.value) if setting_row.type == "list" else setting_row.value,
                      setting_row.type)

@@ -63,6 +63,17 @@ class Database:
             ) 
             """)
 
+        # Статистика времени выполнения этапов
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stages_lead_time(
+                date INT NOT NULL PRIMARY KEY,
+                stage TEXT NOT NULL,
+                lead_time INT NOT NULL,
+                completed BOOL NOT NULL
+            ) 
+            """)
+
     def initial_setup(self):
         self.fill_default()
 
@@ -99,13 +110,14 @@ class Database:
 
     def save_bots_variable(self, values: list):
 
-        self.cur.execute(
+        self.cur.executemany(
             f"""
             INSERT INTO
                 bots_variables
             VALUES
-                {','.join(map(str, values))}
-            """
+                (?,?,?,?)
+            """,
+            values
         )
         self.commit()
 
@@ -145,13 +157,14 @@ class Database:
 
     def save_settings(self, values: list):
 
-        self.cur.execute(
+        self.cur.executemany(
             f"""
             INSERT INTO
                 settings
             VALUES
-                {','.join(map(str, values))}
-            """
+                (?,?,?,?)
+            """,
+            values
         )
         self.commit()
 
@@ -196,5 +209,18 @@ class Database:
             values
         )
         self.commit()
+
+    def save_stage_lead_time(self, values: tuple):
+        with self.lock:
+            self.cur.execute(
+                """
+                INSERT INTO
+                    stages_lead_time
+                VALUES
+                    (?,?,?,?)
+                """,
+                values
+            )
+            self.commit()
 
     # endregion

@@ -64,9 +64,11 @@
                 width: 1
                 points: [self.x, self.y, self.x, self.y + self.height]
         MDLabel:
-            text: "Сделки: {} / {} / {}".format(app.bot.stat['good'], app.bot.stat['missed'], app.bot.stat['bad'])
+            text: "Сделки: {} / {} / {}".format(app.bot.stat['good'], app.bot.stat['skipped'], app.bot.stat['bad'])
         MDLabel:
-            text: "Общий профит: {} div".format(round(1295/app.bot.divine_price, 1) if app.bot.divine_price else 0)
+            text:
+                "Общий профит: {} div".format(round(app.bot.stat['profit']/app.bot.divine_price, 1) \
+                if app.bot.divine_price else 0)
 
 
 <Deals@MDBoxLayout>

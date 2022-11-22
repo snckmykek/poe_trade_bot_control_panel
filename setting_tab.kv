@@ -42,16 +42,6 @@
                     if hotkey_stop_action.value is not None else ""
                 on_text: hotkey_stop_action.set_value(self.text)
         SettingRow:
-            id: hotkey_close_after_tasks
-            text: "Завершение программы (будет ждать завершения всех действий)"
-            type: "str"
-            MDTextField:
-                size_hint_x: .45
-                text:
-                    hotkey_close_after_tasks.value \
-                    if hotkey_close_after_tasks.value is not None else ""
-                on_text: hotkey_close_after_tasks.set_value(self.text)
-        SettingRow:
             id: hotkey_close
             text: "Мгновенное завершение программы"
             type: "str"

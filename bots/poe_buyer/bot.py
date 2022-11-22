@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import random
@@ -45,7 +46,8 @@ class PoeBuyer(Bot):
     db: Database
     divine_price: int = NumericProperty()
     deals: list = ListProperty()
-    stat: dict = DictProperty({'good': 0, 'missed': 0, 'bad': 0})
+    deal_history: dict = {}
+    stat: dict = DictProperty({'good': 0, 'skipped': 0, 'bad': 0, 'profit': 0})
     swag: dict = DictProperty({'chaos': 0, 'divine': 0})
     tabs: list
     trade_thread: threading.Thread = None
@@ -104,6 +106,7 @@ class PoeBuyer(Bot):
                 'stages': [
                     {
                         'func': self.wait_trade_info,
+                        'on_error': {'goto': (2, 0)},
                         'name': "Ждать информацию по валюте и очередь сделок"
                     }
                 ]
@@ -114,33 +117,39 @@ class PoeBuyer(Bot):
                 'available_mode': 'always',
                 'stages': [
                     {
+                        'func': self.prepare_service,
+                        'name': "Подготовка служебных данных"
+                    },
+                    {
                         'func': self.go_home,
-                        'on_error': {'goto': (2, 0)},
+                        'on_error': {'goto': (3, 0)},
                         'name': "ТП в хайдаут"
                     },
                     {
                         'func': self.check_open_stash,
-                        'on_error': {'goto': (2, 0)},
+                        'on_error': {'goto': (3, 0)},
                         'name': "Проверить, открывается ли стеш"
                     },
                 ]
             },
             {
                 'name': "Запрос сделки",
-                'timer': 120,
+                'timer': 60,
                 'available_mode': 'always',
                 'stages': [
                     {
                         'func': self.set_current_deal,
+                        'on_error': {'goto': (2, 0)},
                         'name': "Подобрать и установить текущую сделку"
                     },
                     {
                         'func': self.request_deal,
-                        'on_error': {'goto': (3, 0)},
+                        'on_error': {'goto': (4, 0)},
                         'name': "Отправить запрос и ждать пати"
                     },
                     {
                         'func': self.take_currency,
+                        'on_error': {'goto': (4, 2)},
                         'name': "Взять валюту"
                     },
                     {
@@ -151,28 +160,43 @@ class PoeBuyer(Bot):
             },
             {
                 'name': "Сделка",
-                'timer': 120,
+                'timer': 180,
                 'available_mode': 'always',
                 'stages': [
                     {
-                        'func': self.test_find_chaos,
-                        'name': "Тест найти хаосы в инвентаре"
-                    },
-                    {
                         'func': self.wait_trade,
-                        'name': "Ждать трейд"
+                        'name': "Ждать трейд",
+                        'on_error': {'goto': (3, 0)}
                     },
                     {
                         'func': self.put_currency,
-                        'name': "Положить валюту"
+                        'name': "Положить валюту",
+                        'on_error': {'goto': (5, 0)}
                     },
                     {
                         'func': self.check_items,
-                        'name': "Проверить итемы и подтвердить"
+                        'name': "Проверить итемы",
+                        'on_error': {'goto': (5, 0)}
                     },
                     {
+                        'func': self.set_complete_trade,
+                        'name': "Принять сделку"
+                    },
+                ]
+            },
+            {
+                'name': "Дождаться завершения трейда",
+                'timer': 15,
+                'available_mode': 'always',
+                'stages': [
+                    {
                         'func': self.wait_confirm,
-                        'name': "Дождаться подтверждения"
+                        'on_error': {'goto': (5, 0)},
+                        'name': "Дождаться завершения трейда"
+                    },
+                    {
+                        'func': self.say_ty,
+                        'name': "Благодарение"
                     },
                 ]
             },
@@ -188,14 +212,15 @@ class PoeBuyer(Bot):
                 ]
             },
         ]
-
         self.variables_setting = {
-            'Данные аккаунта': [
+            'Тестовые сделки': [
                 Simple(
-                    key='test_item',
-                    name="test_item",
+                    key='test_deals',
+                    name="Сделки для теста (json-строка)",
                     type='str'
                 ),
+            ],
+            'Данные аккаунта': [
                 Simple(
                     key='login',
                     name="Логин бота",
@@ -224,8 +249,13 @@ class PoeBuyer(Bot):
                     type='str'
                 ),
                 Simple(
-                    key='POESESSID',
-                    name="Кука POESESSID от любого акка для запросов к АПИ",
+                    key='account_POESESSID',
+                    name="Кука POESESSID от текущего бота",
+                    type='str'
+                ),
+                Simple(
+                    key='trade_POESESSID',
+                    name="Кука POESESSID от любого акка для запросов к АПИ трейда",
                     type='str'
                 ),
                 Simple(
@@ -233,6 +263,24 @@ class PoeBuyer(Bot):
                     name="Частота обновления списка сделок (в сек)",
                     type='int'
                 ),
+            ],
+            'Общие настройки': [
+                Simple(
+                    key='logs_path',
+                    name="Путь до логов ПОЕ",
+                    type='str'
+                ),
+                Simple(
+                    key='min_chaos',
+                    name="Минимальное количество хаосов для работы",
+                    type='int'
+                ),
+                Simple(
+                    key='min_divine',
+                    name="Минимальное количество дивайнов для работы",
+                    type='int'
+                ),
+
             ],
             'Окно: раб. стол': [
                 Template(
@@ -366,12 +414,12 @@ class PoeBuyer(Bot):
                     region=Coord(
                         key='region_stash',
                         name="",
-                        relative=False,
+                        relative=True,
                         snap_mode='lt',
                         type='region',
                         window='poe'
                     ),
-                    relative=False,
+                    relative=True,
                     type='template',
                     window='poe'
                 ),
@@ -402,25 +450,62 @@ class PoeBuyer(Bot):
                     key='region_trade_inventory_fields_my',
                     name="Поле ячеек трейда (мои)",
                     relative=True,
-                    snap_mode='lt',
+                    snap_mode='ct',
                     type='region',
-                    window='poe'
+                    window='poe_except_inventory'
                 ),
                 Coord(
                     key='region_trade_inventory_fields_seller',
                     name="Поле ячеек трейда (продавца)",
                     relative=True,
-                    snap_mode='lt',
+                    snap_mode='ct',
                     type='region',
-                    window='poe'
+                    window='poe_except_inventory'
                 ),
-                Coord(
-                    key='coord_complete_trade',
-                    name="Координаты кнопки для завершения трейда",
+                Template(
+                    key='template_trade',
+                    name="Полусфера в шапке трейда (или другой элемент для определения, что трейд открыт)",
+                    region=Coord(
+                        key='region_trade',
+                        name="",
+                        relative=True,
+                        snap_mode='ct',
+                        type='region',
+                        window='poe_except_inventory'
+                    ),
                     relative=True,
-                    snap_mode='lt',
-                    type='coord',
-                    window='poe'
+                    type='template',
+                    window='poe_except_inventory'
+                ),
+                Template(
+                    key='template_complete_trade',
+                    name="Шаблон кнопки для завершения трейда",
+                    region=Coord(
+                        key='region_complete_trade',
+                        name="",
+                        relative=True,
+                        snap_mode='ct',
+                        type='region',
+                        window='poe_except_inventory'
+                    ),
+                    relative=True,
+                    type='template',
+                    window='poe_except_inventory'
+                ),
+                Template(
+                    key='template_cancel_complete_trade',
+                    name="Шаблон кнопки для отмены завершения трейда",
+                    region=Coord(
+                        key='region_cancel_complete_trade',
+                        name="",
+                        relative=True,
+                        snap_mode='ct',
+                        type='region',
+                        window='poe_except_inventory'
+                    ),
+                    relative=True,
+                    type='template',
+                    window='poe_except_inventory'
                 ),
                 Template(
                     key='template_x_button',
@@ -456,8 +541,9 @@ class PoeBuyer(Bot):
         }
 
         self.windows = {
-            'main': "",
-            'poe': "Path of Exile"
+            'main': {'name': ""},
+            'poe': {'name': "Path of Exile", 'expression': ('x', 'y', 'w', 'h')},
+            'poe_except_inventory': {'name': "Path of Exile", 'expression': ('x', 'y', 'w - 0.6166 * h', 'h')}
 
         }
 
@@ -570,12 +656,12 @@ class PoeBuyer(Bot):
 
             self.update_offer_list()
 
+            if self.app.s(self.key, 'debug'):  # !
+                return
+
             _interval = self.v('poetrade_info_update_frequency') - (datetime.now() - _start).total_seconds()
             if _interval > 0:
                 time.sleep(_interval)
-
-            if self.app.s(self.key, 'debug'):  # !
-                return
 
     def update_tabs_and_swag(self):
         headers = {
@@ -595,7 +681,7 @@ class PoeBuyer(Bot):
             "Sec-Fetch-Dest": "empty",
             "Accept-Encoding": "gzip,deflate,br",
             "Accept-Language": "q=0.9,en-US;q=0.8,en;q=0.7",
-            "Cookie": f"POESESSID={self.v('POESESSID')}"
+            "Cookie": f"POESESSID={self.v('account_POESESSID')}"
         }
 
         url = fr"https://www.pathofexile.com/character-window/get-stash-items?league={self.v('league')}" \
@@ -641,6 +727,11 @@ class PoeBuyer(Bot):
         self.divine_price = round(sum(prices) / len(prices))
 
     def update_offer_list(self):
+
+        if self.app.s(self.key, 'test'):
+            self.deals = json.loads(self.v('test_deals').replace('I\'d', 'Id').replace('\'', '\"'))
+            return
+
         items_i_want = [
             {
                 'item': item_settings['item'],
@@ -700,7 +791,7 @@ class PoeBuyer(Bot):
             "Referer": f"https://www.pathofexile.com/trade/exchange/{league}",
             "Accept-Encoding": "gzip,deflate,br",
             "Accept-Language": "q=0.9,en-US;q=0.8,en;q=0.7",
-            "Cookie": f"POESESSID={self.v('POESESSID')}"
+            "Cookie": f"POESESSID={self.v('trade_POESESSID')}"
         }
 
         # Ссылка для запроса к странице с балком
@@ -792,6 +883,38 @@ class PoeBuyer(Bot):
     # endregion
 
     # region Продажа. Подготовка
+    def prepare_service(self):
+        min_chaos = self.v('min_chaos')
+        min_divine = self.v('min_divine')
+        if self.swag['chaos'] < min_chaos or self.swag['divine'] < min_divine:
+            raise ValueError(f"Количество валюты меньше минимальных значений. Chaos: {self.swag['chaos']} "
+                             f"(минимум: {min_chaos}), Divine: {self.swag['divine']} (минимум: {min_divine})")
+
+        if self.deal_history:
+            self.db.save_deal_history(list(self.deal_history.values()))
+
+            if self.deal_history['completed']:
+                self.stat['good'] += 1
+                self.stat['profit'] += self.deal_history['profit']
+            else:
+                if self.deal_history['last_stage'] == "3,0":  # Не кинул пати продавец
+                    self.stat['skipped'] += 1
+                else:
+                    self.stat['bad'] += 1
+
+        self.deal_history = {
+            'date': int(datetime.now().timestamp()),
+            'id': "",
+            'completed': False,
+            'error': "",
+            'last_stage': "0,0",
+            'item': "",
+            'qty': 0,
+            'c_price': 0,
+            'profit': 0,
+            'deal_time': 0
+        }
+
     def go_home(self):
         self.wait_for_template('template_game_loaded')  # Ждем загрузку
 
@@ -802,14 +925,14 @@ class PoeBuyer(Bot):
 
     def check_open_stash(self):
         self.open_stash()  # Открываем стеш
+        self.open_currency_tab()  # Нажимаем на валютную вкладку
 
-        # Нажимаем на валютную вкладку
+    def open_currency_tab(self):
         # TODO нужны проверки, если нет вкладки или еще какие-то траблы, проверка - нажата ли реально вкладка и тд
         coord = next((tab['coord'] for tab in self.tabs if tab['type'] == 'CurrencyStash'), 0)
         pyautogui.moveTo(coord)
         time.sleep(.1)
         pyautogui.click()
-        time.sleep(.5)
 
     def open_stash(self):
         # Кликаем на надпись "STASH" пока не увидим признак открытого стеша или не закончится время
@@ -870,6 +993,7 @@ class PoeBuyer(Bot):
         # TODO: чекнуть на актуальность сделки, пока берем как есть
         while self.deal_completed(current_deal['id']):
             current_deal = self.deals.pop(0)
+
         available_c = self.swag['chaos'] + self.swag['divine'] * self.divine_price
 
         deal_item_amount = 0
@@ -896,35 +1020,37 @@ class PoeBuyer(Bot):
 
         self.current_deal = current_deal
 
+        self.update_deal_history(
+            id=current_deal['id'],
+            item=current_deal['item_currency'],
+            qty=current_deal['deal_exchange_amount'],
+            c_price=current_deal['c_price'],
+            profit=current_deal['profit'],
+        )
+
+    def update_deal_history(self, **kwargs):
+        self.deal_history.update(kwargs)
+
     def deal_completed(self, deal_id):
         return deal_id in self.db.get_last_deals(100)
 
     def request_deal(self):
-        if self.app.s('test'):
-            print(self.current_deal['whisper'])
-        else:
-            self.send_to_chat(self.current_deal['whisper'])
+        time.sleep(.5)
+
+        self.send_to_chat(self.current_deal['whisper'])
 
         self.click_to('template_accept')
 
     def take_currency(self):
 
-        # region test
-        self.swag.update({
-            'divine': 50,
-            'chaos': 154,
-        })
-        self.current_deal.update({
-            'divine_qty': 12,
-            'chaos_qty': 133,
-        })
-        # endregion
+        if self.stop():
+            raise TimeoutError("Не смог взять валюту из стеша")
 
         self.open_stash()
 
-        if not self.currency_put_in():
-            return "Не смог выложить валюту из стеша"
+        self.currency_put_in()
 
+        self.open_currency_tab()  # Нажимаем на валютную вкладку
         self.currency_from_stash(self.current_deal['divine_qty'], 'divine')
         self.currency_from_stash(self.current_deal['chaos_qty'], 'chaos')
 
@@ -936,6 +1062,7 @@ class PoeBuyer(Bot):
 
             self.close_x_tabs()
 
+            time.sleep(1)
             cells_matrix = self.get_cells_matrix(region)
             non_empty_cells = list(zip(*np.where(cells_matrix == 0)))
 
@@ -959,7 +1086,7 @@ class PoeBuyer(Bot):
 
             attempts -= 1
 
-        raise TimeoutError(f"Не смог выложить валюту с 3 попыток")
+        raise TimeoutError(f"Не смог выложить валюту из инвентаря с 3 попыток")
 
     def get_cells_matrix(self, region, item=None):
         """
@@ -979,6 +1106,9 @@ class PoeBuyer(Bot):
             template_settings = self.v('template_empty_field')
             coords = self.find_template(region, template_settings['path'], template_settings['size'], mode='all')
 
+        if not coords:
+            coords = []
+
         cell_size = [int(region[3] / 5), int(region[2] / 12)]
         inventory_cells = np.zeros([5, 12])
         for x, y, w, h in coords:
@@ -993,61 +1123,56 @@ class PoeBuyer(Bot):
 
     def currency_from_stash(self, amount, currency):
 
-        while True:
+        if not amount:
+            return
 
-            if not amount:
-                return
+        if currency == 'divine':
+            currency_coord = self.v('coord_divine')
+            stack = self.swag['divine']
+        elif currency == 'chaos':
+            currency_coord = self.v('coord_chaos')
+            stack = self.swag['chaos']
+        else:
+            raise ValueError(f"Неверно указана валюта: '{currency}'")
 
-            if currency == 'divine':
-                currency_coord = self.v('coord_divine')
-                stack = self.swag['divine']
-            elif currency == 'chaos':
-                currency_coord = self.v('coord_chaos')
-                stack = self.swag['chaos']
-            else:
-                raise ValueError(f"Неверно указана валюта: '{currency}'")
+        if stack < amount:
+            raise ValueError(f"Недостаточно валюты '{currency}': всего {stack}, требуется {amount}")
 
-            if stack < amount:
-                raise ValueError(f"Недостаточно валюты '{currency}': всего {stack}, требуется {amount}")
+        stack_size = 10
+        inv_region = self.v('region_inventory_fields')
 
-            stack_size = 10
-            inv_region = self.v('region_inventory_fields')
+        if stack - amount == 0:
+            pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
+            pyautogui.keyDown('ctrl')
+            pyautogui.click(clicks=(math.ceil(amount // stack_size)), interval=.2)
+            pyautogui.keyUp('ctrl')
 
-            if stack - amount == 0:
+        else:
+            pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
+            pyautogui.keyDown('ctrl')
+            pyautogui.click(clicks=math.floor(amount // stack_size), interval=.2)
+            pyautogui.keyUp('ctrl')
+            if amount % stack_size != 0:
+                cells_matrix = self.get_cells_matrix(inv_region)
+                empty_cell = sorted(list(zip(*np.where(cells_matrix == 1))), key=itemgetter(1))[0]
+
                 pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
-                pyautogui.keyDown('ctrl')
-                pyautogui.click(clicks=(math.ceil(amount // stack_size)), interval=.2)
-                pyautogui.keyUp('ctrl')
+                pyautogui.keyDown('Shift')
+                pyautogui.click()
+                pyautogui.keyUp('Shift')
+                pyautogui.write(f'{amount % stack_size}')
+                pyautogui.press('Enter')
+                pyautogui.moveTo(int(inv_region[0] + inv_region[2] * (empty_cell[1] + 0.5) / 12),
+                                 int(inv_region[1] + inv_region[3] * (empty_cell[0] + 0.5) / 5),
+                                 .2)
+                time.sleep(.1)
+                pyautogui.click()
 
-            else:
-                pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
-                pyautogui.keyDown('ctrl')
-                pyautogui.click(clicks=math.floor(amount // stack_size), interval=.2)
-                pyautogui.keyUp('ctrl')
-                if amount % stack_size != 0:
-                    cells_matrix = self.get_cells_matrix(inv_region)
-                    empty_cell = sorted(list(zip(*np.where(cells_matrix == 1))), key=itemgetter(1))[0]
-
-                    pyautogui.moveTo(*currency_coord, random.uniform(.1, .2))
-                    pyautogui.keyDown('Shift')
-                    pyautogui.click()
-                    pyautogui.keyUp('Shift')
-                    pyautogui.write(f'{amount % stack_size}')
-                    pyautogui.press('Enter')
-                    pyautogui.moveTo(int(inv_region[0] + inv_region[2] * (empty_cell[1] + 0.5) / 12),
-                                     int(inv_region[1] + inv_region[3] * (empty_cell[0] + 0.5) / 5),
-                                     .2)
-                    time.sleep(.1)
-                    pyautogui.click()
-
-            if amount == self.count_items(inv_region, currency):
-                return
-            else:
-                if self.app.s(self.key, 'debug'):
-                    print("Выложил неверное количество валюты")
-
-            if self.stop():
-                raise TimeoutError(f"Не смог выложить валюту '{currency}' в количестве: {amount}")
+        counted = self.count_items(inv_region, currency)
+        if amount == counted:
+            return
+        else:
+            raise ValueError(f"Выложил неверное количество валюты. Нужно: {amount}, подсчитано: {counted}")
 
     def count_items(self, region, item):
         self.close_x_tabs()
@@ -1068,6 +1193,9 @@ class PoeBuyer(Bot):
 
             qty += _qty
 
+        if self.app.s(self.key, 'debug'):
+            print(f"Подсчитано {item}: {qty}")
+
         return qty
 
     def teleport(self):
@@ -1079,8 +1207,20 @@ class PoeBuyer(Bot):
 
     # region Продажа. Сделка
     def wait_trade(self):
-        self.click_to('template_accept')
-        self.wait_for_template('template_trade', 5)
+        trade_template_settings = self.v('template_trade')
+
+        while True:
+            time.sleep(.5)
+
+            if self.find_template(**trade_template_settings):
+                break
+
+            self.click_to('template_accept', wait_template=False)
+
+            if self.stop():
+                raise TimeoutError("Не дождался трейда")
+
+        self.clear_logs()
 
     def put_currency(self):
         self.currency_put_in(True)
@@ -1091,13 +1231,11 @@ class PoeBuyer(Bot):
         while self.current_deal['deal_item_amount'] > qty:
             self.activate_items(region)
 
-            qty = self.count_items(self.current_deal['item_currency'])
+            qty = self.count_items(region, self.current_deal['item_currency'])
 
             if self.stop():
                 raise TimeoutError(
                     f"Неверное количество предметов для сделки {qty} (нужно {self.current_deal['deal_item_amount']})")
-
-            self.click_to('coord_complete_trade')
 
     def activate_items(self, region):
         cells_matrix = self.get_cells_matrix(region)
@@ -1108,9 +1246,45 @@ class PoeBuyer(Bot):
                              int(region[1] + region[3] * (y + 0.5) / 5),
                              .1)
 
-    def wait_confirm():
-        variables['last_10_completed_deals'].insert(0, variables['current_deal']['id'])
-        variables['last_10_completed_deals'] = variables['last_10_completed_deals'][:10]
-        time.sleep(2)
+    def set_complete_trade(self):
+        try:
+            if self.wait_for_template('template_cancel_complete_trade', .1, accuracy=.8):
+                # Уже нажата кнопка (т.к. вместо нее появилась кнопка отмены трейда)
+                return
+        except TimeoutError:
+            pass
+
+        self.click_to('template_complete_trade', accuracy=.8)
+
+    def wait_confirm(self):
+        while True:
+            trade_status = self.get_trade_status()
+
+            if trade_status == 'accepted':
+                return
+            elif trade_status == 'cancelled':
+                raise ValueError("Трейд отменен продавцом")
+
+            if self.stop():
+                raise TimeoutError("Не дождался подтверждения от продавца")
+
+            time.sleep(.5)
+
+    def say_ty(self):
+        self.ty(self.current_deal['character_name'])
+
+        self.update_deal_history(deal_time=int(datetime.now().timestamp()) - self.deal_history['date'])
+        self.db.change_item_qty(self.current_deal['item_currency'], -self.current_deal['deal_item_amount'])
+
+    def clear_logs(self):
+        open(self.v('logs_path'), 'w').close()  # Очистка логов перед трейдом
+
+    def get_trade_status(self):
+        with open(self.v('logs_path'), 'r', encoding="utf-8") as f:
+            for line in f:
+                if 'Trade accepted.' in line:
+                    return 'accepted'
+                elif 'Trade cancelled.' in line:
+                    return 'cancelled'
 
 # endregion

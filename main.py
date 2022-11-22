@@ -12,6 +12,7 @@
 import os
 import time
 
+import keyboard
 from kivy.config import Config
 Config.set('graphics', 'resizable', '1')
 Config.set('graphics', 'width', '1200')
@@ -73,10 +74,43 @@ class ControlPanelApp(MDApp):
     state = StringProperty('break', options=['break', 'work'])
     tasks_obj = ListProperty([])
     timer = NumericProperty(0)
+    _handbrake = False  # TODO Временное решение, нужно отслеживать, поставился ли need_stop_task вручную или программно
 
     def __init__(self, **kwargs):
         super(ControlPanelApp, self).__init__(**kwargs)
         self.bots = bots_list
+
+    def set_hotkeys(self):
+
+        # hotkey_stop_action
+        @mainthread
+        def set_need_stop_task():
+            self.need_stop_task = True
+
+        hotkey = self.s('any', 'hotkey_stop_action')
+        if not hotkey:
+            hotkey = "f11"
+        keyboard.add_hotkey(hotkey, set_need_stop_task)
+
+        # hotkey_break
+        @mainthread
+        def work_break():
+            self.request_break() if self.state == 'work' else self.start()
+
+        hotkey = self.s('any', 'hotkey_break')
+        if not hotkey:
+            hotkey = "f12"
+        keyboard.add_hotkey(hotkey, work_break)
+
+        # hotkey_close
+        @mainthread
+        def instant_exit():
+            os._exit(0)
+
+        hotkey = self.s('any', 'hotkey_close')
+        if not hotkey:
+            hotkey = "ctrl+f12"
+        keyboard.add_hotkey(hotkey, instant_exit)
 
     def add_task_buttons(self):
         buttons = self.main.ids.task_tab.ids.buttons
@@ -130,6 +164,11 @@ class ControlPanelApp(MDApp):
     def execute_current_stage(self, *args):
         stage = self.bot.tasks[self.current_task]['stages'][self.current_stage]
 
+        if self.s(self.bot.key, 'test'):
+            time.sleep(1)
+
+        _start = datetime.now()
+
         try:
             self.bot.set_empty_log()
             error = stage['func']()
@@ -146,6 +185,24 @@ class ControlPanelApp(MDApp):
             result = {'text': error}
             if stage.get('on_error'):
                 result.update(stage.get('on_error'))
+
+            # Пока написано тут, но в будущем нужно в бота вообще всю эту функцию перенести
+            #  (это относится только к конкретному боту, а не к любому)
+            try:
+                self.bot.update_deal_history(error=error)
+            except:
+                pass
+
+        # TODO Временно тут
+        try:
+            self.bot.update_deal_history(last_stage=",".join([self.current_task, self.current_stage]))
+        except:
+            pass
+
+        # TODO Временное решение, нужен более гибкий функционал записи времени выполнения участков этапов
+        self.db.save_stage_lead_time(
+            (_start.timestamp(), stage['name'], (datetime.now() - _start).total_seconds(), not error)
+        )
 
         self.on_complete_stage(self, error=result)
 
@@ -234,7 +291,7 @@ class ControlPanelApp(MDApp):
                 self.request_break()
                 return
 
-            if goto and not _debug and not self.need_stop_task:
+            if goto and not _debug and not self._handbrake:
                 self.start_stage(goto)
 
         else:  # Запускаем следующий этап
@@ -260,6 +317,8 @@ class ControlPanelApp(MDApp):
             self.set_bot(current_bot)
         else:
             self.choose_bot()
+
+        self.set_hotkeys()
 
     def open_status(self):
         dialog = MDDialog(
@@ -351,6 +410,8 @@ class ControlPanelApp(MDApp):
         if self.state != 'work':
             self.start(goto)
             return
+
+        self._handbrake = False
 
         _current_task = self.current_task
         if self.set_current_stage(goto):

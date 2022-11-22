@@ -107,6 +107,7 @@ class TaskBox(MDCard, RoundedRectangularElevationBehavior, ButtonBehavior):
             app.start_by_task((self.index, 0))
         else:
             app.need_stop_task = True
+            app._handbrake = True
 
     def reset_timer(self):
         self.timer = self.task_time

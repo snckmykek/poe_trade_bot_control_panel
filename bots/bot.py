@@ -127,7 +127,7 @@ class Bot(EventDispatcher):
     Применяются для привязки координат и поиска по шаблонам.
     """
     windows: dict = {
-        'main_screen': ""
+        'main_screen': {'name': ""}
     }
 
     def __init__(self):
@@ -205,7 +205,7 @@ class Bot(EventDispatcher):
     # endregion
 
     # region Общие функции
-    def click_to(self, variable_key, offset_x=.5, offset_y=.5, clicks=1, wait_template=True):
+    def click_to(self, variable_key, offset_x=.5, offset_y=.5, clicks=1, wait_template=True, accuracy=None):
         """
         Кликает по координатам или найденному шаблону clicks раз с отступом от верхнего левого края offset_x и offset_y в пропорциях
         шаблона (offset_x=.5, offset_y=.5 означает клик в центр шаблона, значения могут превышать 1 или быть
@@ -225,7 +225,7 @@ class Bot(EventDispatcher):
                 else:
                     mode: Literal['once', 'all'] = 'all'
 
-                xywh = self.find_template(**variable_value, mode=mode)
+                xywh = self.find_template(**variable_value, mode=mode, accuracy=accuracy)
 
                 if not xywh and not wait_template:  # Если шаблона нет, то и не нужно на него кликать
                     return
@@ -257,7 +257,7 @@ class Bot(EventDispatcher):
                     time.sleep(.3)
 
     # Найти по шаблону
-    def find_template(self, region, path, size, accuracy=.9, mode: Literal['once', 'all'] = 'once', use_mask=False,
+    def find_template(self, region, path, size, accuracy=None, mode: Literal['once', 'all'] = 'once', use_mask=False,
                       is_item=False):
         """
         :param is_item: Если это предмет, добавляем в маску область, где указано количество, чтобы не учитывать
@@ -269,9 +269,12 @@ class Bot(EventDispatcher):
         :param region: Область для скриншота в глобальных координатах в пикселях,
         :param path: Путь до шаблона (будет использован путь: images/templates/{path}) или  полная url,
         :param size: Размер шаблона в пикселях, к которому нужно привести полученный шаблон,
-        :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.9,
+        :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.89,
         :return: [x, y, w, h] (x,y - левый верхний угол совпадения шаблона, w, h - ширина и высота шаблона)
         """
+
+        if accuracy is None:
+            accuracy = .89
 
         # 1. Подготовка шаблона
         if path.startswith("http"):  # Это url
@@ -343,12 +346,14 @@ class Bot(EventDispatcher):
         # endregion
 
         if result.max() < accuracy:
-            self.log.update({'image': img_gray})
+            coord = cv2.minMaxLoc(result)[-1]
+            cv2.rectangle(img_gray, coord, [coord[0] + template_size[1], coord[1] + template_size[0]], 255, 2)
+            self.log.update({'image': img_gray, 'details': f"{str(result.max())} < {accuracy}"})
             return
 
         if mode == 'once':  # Возвращаем координаты максимально совпадающего шаблона
             if self.app.s(self.key, 'debug'):
-                print(path, result.max())
+                print(path, result.max(), accuracy)
 
             coord = cv2.minMaxLoc(result)[-1]
             return [*coord, *template_size[::-1]]  # template_size указан как [y, x] - меняем местами
@@ -362,7 +367,7 @@ class Bot(EventDispatcher):
                 [(x, y, x + template_size[1], y + template_size[0]) for (y, x) in coords]))
 
             if self.app.s(self.key, 'debug'):
-                print(path, len(pick), result.max())
+                print(path, len(pick), result.max(), accuracy)
 
                 for p in pick:
                     cv2.rectangle(img_gray, p[:2], p[-2:], 255, 2)
@@ -371,15 +376,15 @@ class Bot(EventDispatcher):
 
             return [[start_x, start_y, end_x - start_x, end_y - start_y] for (start_x, start_y, end_x, end_y) in pick]
 
-    def wait_for_template(self, template_name, timeout=0):
+    def wait_for_template(self, template_name, timeout=0, accuracy=None):
         """Ищет по шаблону пока не найдет или не нужно будет завершать задачу"""
 
         template_settings = self.v(template_name)
 
         _start = datetime.datetime.now()
         while True:
-            if self.find_template(**template_settings):
-                return
+            if self.find_template(**template_settings, accuracy=accuracy):
+                return True
 
             if self.stop() or (timeout and (datetime.datetime.now() - _start).total_seconds() > timeout):
                 raise TimeoutError(f"Не найден шаблон '{self._variables[template_name].name}'")
@@ -407,24 +412,24 @@ class Bot(EventDispatcher):
 
 # region Окна
 
-def get_window_param(window, p: Literal["xywh", "xy", "wh", "h"] = 'xywh'):
+def get_window_param(window_key, p: Literal["xywh", "xy", "wh", "h"] = 'xywh'):
     """
-    :param window: Ключ окна из bot.windows. Если нужно узнать имя окна приложения, см. функцию all_windows()
+    :param window_key: Ключ окна из bot.windows. Если нужно узнать имя окна приложения, см. функцию all_windows()
     :param p: Параметр возвращаемых данных
     :return [x, y, w, h]: xy - верхний левый угол, wh - ширина, высота
     """
 
-    window_name = MDApp.get_running_app().bot.windows.get(window)
+    window_settings = MDApp.get_running_app().bot.windows.get(window_key)
 
-    if not window_name:
+    if not window_settings['name']:
         return [0, 0, GetSystemMetrics(0), GetSystemMetrics(1)]
 
-    hwnd = win32gui.FindWindow(None, window_name)
+    hwnd = win32gui.FindWindow(None,  window_settings['name'])
 
     try:
         window_ext = win32gui.GetWindowRect(hwnd)  # Внешние рамки окна с учетом теней и шапки
     except pywintypes.error:
-        raise WindowsError(f"Не найдено окно с именем {window_name}")
+        raise WindowsError(f"Не найдено окно с именем { window_settings['name']}")
 
     header_rect = RECT()
     DWMWA_CAPTION_BUTTON_BOUNDS = 5  # Параметр для получения координат кнопок в шапке окна
@@ -450,6 +455,11 @@ def get_window_param(window, p: Literal["xywh", "xy", "wh", "h"] = 'xywh'):
     y = window_ext[1] + indent[1]
     w = window_ext[2] - indent[2] - x
     h = window_ext[3] - indent[3] - y
+
+    expression = window_settings.get('expression')
+
+    if expression:
+        x, y, w, h = map(eval, expression)
 
     if p == 'xy':
         return [x, y]
@@ -540,7 +550,7 @@ class Coord(Variable):
 
     verifiable: dict = {
         'type': ['coord', 'coord_list', 'region'],
-        'snap_mode': ['lt', 'rt', 'lb', 'rb']
+        'snap_mode': ['lt', 'rt', 'lb', 'rb', 'ct']
     }
 
     """Значение выражено долями единицы относительно высоты окна"""
@@ -555,7 +565,7 @@ class Coord(Variable):
     def fullname(self):
         return f"{self.name} ({self.snap_mode})"
 
-    def snap(self, v: list or tuple):
+    def snap(self, v: list or tuple, reverse=False):
         """
         Перевязывает координаты от нестандартной привязки к левому верхнему углу окна.
         При повторном применении меняет обратно. Функцией можно сделать точкой отсчета как self.snap_mode, так и 'lt'.
@@ -568,6 +578,8 @@ class Coord(Variable):
             new_v = [v[0], self.window_info['size'][1] - v[1]]
         elif self.snap_mode == 'rb':  # Привязка была к правому нижнему углу
             new_v = [self.window_info['size'][0] - v[0], self.window_info['size'][1] - v[1]]
+        elif self.snap_mode == 'ct':  # Привязка была к середине верхней рамки
+            new_v = [v[0] + self.window_info['size'][0] / 2 * (1 if reverse else -1), v[1]]
         else:  # Была стандартная привязка 'lt'
             return v
 
@@ -585,9 +597,9 @@ class Coord(Variable):
 
         if self.type == 'coord_list':
             pairs = zip(value[::2], value[1::2])  # Общий список соединяем попарно
-            value = [to_global(self.window_info['pos'], self.snap(pair)) for pair in pairs]
+            value = [to_global(self.window_info['pos'], self.snap(pair, True)) for pair in pairs]
         else:
-            value = to_global(self.window_info['pos'], self.snap(value))
+            value = to_global(self.window_info['pos'], self.snap(value, True))
 
         return value
 
