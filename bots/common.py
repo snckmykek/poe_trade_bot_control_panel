@@ -10,8 +10,9 @@ from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.textfield import MDTextField
+from common import resource_path
 
-Builder.load_file(os.path.join(dirname(__file__), 'common.kv'))
+Builder.load_file(resource_path('bots\\common.kv'))
 
 
 class CustomDialog(MDDialog):
@@ -65,7 +66,7 @@ def clear_noise(thresh_original):
 
     new = np.zeros([*thresh.shape[:2], 1], dtype=np.uint8)
 
-    contours = list(filter(lambda c: c.shape[0] < thresh.shape[0] / 3, contours))
+    contours = list(filter(lambda c: cv2.boundingRect(c)[3] < thresh.shape[0] / 2, contours))
 
     # отображаем контуры поверх изображения
     for i in range(len(contours)):
@@ -143,7 +144,7 @@ def image_to_int(image, chan):
         print(e)
 
     # Изменяем размер изображения, чтобы нейронке лучше понималось
-    scale_percent = 25 / image.shape[0]
+    scale_percent = 35 / image.shape[0]
     width = int(image.shape[1] * scale_percent)
     height = int(image.shape[0] * scale_percent)
     dim = (width, height)
@@ -154,6 +155,10 @@ def image_to_int(image, chan):
 
     # Удаляем мусор (контуры меньше трети высоты картинки - это не цифры)
     clear_noise(threshold_image)
+
+    # cv2.imshow('image', threshold_image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
     threshold_image = cv2.resize(threshold_image, [dim[0] * 2, dim[1] * 2], interpolation=cv2.INTER_CUBIC)
 

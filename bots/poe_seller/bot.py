@@ -25,11 +25,11 @@ from bots.poe_buyer.db_requests import Database
 from bots.poe_buyer.additional_functional import Content, Items
 
 
-class PoeBuyer(Bot):
+class PoeSeller(Bot):
     # Обязательные
     icon = 'account-arrow-left'
-    name = "ПОЕ: Покупатель"
-    key = "poe_buyer"
+    name = "ПОЕ: Продавец"
+    key = "poe_seller"
 
     # Кастомные
     current_deal: dict = DictProperty({
@@ -53,7 +53,7 @@ class PoeBuyer(Bot):
     trade_thread: threading.Thread = None
 
     def __init__(self):
-        super(PoeBuyer, self).__init__()
+        super(PoeSeller, self).__init__()
 
         self.task_tab_buttons = [
             {

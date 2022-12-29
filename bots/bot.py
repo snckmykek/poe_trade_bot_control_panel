@@ -1,24 +1,27 @@
-import datetime
+from datetime import datetime
 import os
 from dataclasses import dataclass
 from typing import Literal
 
-import cv2
-import numpy as np
-import pyautogui
-import requests
 from imutils.object_detection import non_max_suppression
 from kivy.event import EventDispatcher
 from kivy.properties import DictProperty
 from kivy.uix.widget import Widget
 from kivymd.app import MDApp
 
-import ctypes
 from ctypes.wintypes import HWND, DWORD, RECT
+import ctypes
+import cv2
+import numpy as np
+import pyautogui
+import requests
+import matplotlib.pyplot as plt
 import pywintypes
 import time
 import win32gui
 from win32api import GetSystemMetrics
+
+from common import resource_path
 
 dwmapi = ctypes.WinDLL("dwmapi")
 
@@ -33,6 +36,12 @@ class Bot(EventDispatcher):
     Обязательно задается до инициализации
     """
     icon: str = 'presentation-play'
+
+    """
+    Можно использовать для своих ботов, чтобы "приостанавливать" их по хоткею, не останавливая всю платформу.
+    При старте любого этапа всегда устанавливается False
+    """
+    freeze: bool = False
 
     """Любой словарь для удобства хранения логов в процессе выполнения этапа (после - сохраняется в БД и обнуляется)"""
     log: dict = {}
@@ -133,10 +142,28 @@ class Bot(EventDispatcher):
     def __init__(self):
         super(Bot, self).__init__()
 
+        # hotkey change_freeze
+        def change_freeze():
+            self.freeze = not self.freeze
+            print(f"self.freeze = {self.freeze}")
+
+        import keyboard
+        keyboard.add_hotkey("ctrl+f11", change_freeze)
+
         self.app = MDApp.get_running_app()
+
+    def check_freeze(self):
+        while self.freeze:
+            time.sleep(.5)
+
+    def get_task_tab_buttons_settings(self):
+        return self.task_tab_buttons
 
     def on_variables_setting(self, *_):
         self._variables = {v.key: v for list_v in self.variables_setting.values() for v in list_v}
+
+    def set_freeze(self, freeze):
+        self.freeze = freeze
 
     def v(self, variable_name):
         """Возвращает значение переменной по ее имени. В случае ее отсутствия в БД вызывает ошибку"""
@@ -158,7 +185,7 @@ class Bot(EventDispatcher):
         Для наследуемых классов следует переопределить функцию.
         """
         self.log = {
-            'date': int(datetime.datetime.now().timestamp()),
+            'date': int(datetime.now().timestamp()),
             'details': "",
             'image': None,
             'level': 0,
@@ -205,7 +232,7 @@ class Bot(EventDispatcher):
     # endregion
 
     # region Общие функции
-    def click_to(self, variable_key, offset_x=.5, offset_y=.5, clicks=1, wait_template=True, accuracy=None):
+    def click_to(self, variable_key, offset_x=.5, offset_y=.5, clicks=1, wait_template=True, accuracy=None, timeout=0):
         """
         Кликает по координатам или найденному шаблону clicks раз с отступом от верхнего левого края offset_x и offset_y в пропорциях
         шаблона (offset_x=.5, offset_y=.5 означает клик в центр шаблона, значения могут превышать 1 или быть
@@ -214,11 +241,12 @@ class Bot(EventDispatcher):
 
         variable = self._variables[variable_key]
         variable_value = self.v(variable_key)
+        
+        _start = datetime.now()
 
         if isinstance(variable, Template):  # Шаблон
 
-            xywh = None
-            while not xywh:
+            while True:
 
                 if variable.type == 'template':
                     mode: Literal['once', 'all'] = 'once'
@@ -230,7 +258,10 @@ class Bot(EventDispatcher):
                 if not xywh and not wait_template:  # Если шаблона нет, то и не нужно на него кликать
                     return
 
-                if self.stop():
+                if xywh:
+                    break
+
+                if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
                     raise TimeoutError(f"Не найден шаблон '{variable.name}'")
                 else:
                     time.sleep(.5)
@@ -239,8 +270,9 @@ class Bot(EventDispatcher):
                 xywh = [xywh, ]
 
             for _xywh in xywh:
-                x, y, w, h = _xywh
+                self.check_freeze()
 
+                x, y, w, h = _xywh
                 pyautogui.moveTo(to_global(variable_value['region'], [x + w * offset_x, y + h * offset_y]))
                 pyautogui.click(clicks=clicks)
                 time.sleep(.3)
@@ -249,12 +281,12 @@ class Bot(EventDispatcher):
             if variable.type == 'coord':
                 pyautogui.moveTo(variable_value)
                 pyautogui.click(clicks=clicks)
-                time.sleep(.5)
             elif variable.type == 'coord_list':
                 for coord in variable_value:
+                    self.check_freeze()
                     pyautogui.moveTo(coord)
                     pyautogui.click(clicks=clicks)
-                    time.sleep(.3)
+                    time.sleep(.1)
 
     # Найти по шаблону
     def find_template(self, region, path, size, accuracy=None, mode: Literal['once', 'all'] = 'once', use_mask=False,
@@ -273,6 +305,8 @@ class Bot(EventDispatcher):
         :return: [x, y, w, h] (x,y - левый верхний угол совпадения шаблона, w, h - ширина и высота шаблона)
         """
 
+        self.check_freeze()
+
         if accuracy is None:
             accuracy = .89
 
@@ -282,7 +316,7 @@ class Bot(EventDispatcher):
             template = np.asarray(bytearray(template_b), dtype="uint8")
             template = cv2.imdecode(template, cv2.IMREAD_UNCHANGED)
         else:
-            template = cv2.imread(f"images/templates/{path}", cv2.IMREAD_UNCHANGED)
+            template = (plt.imread(resource_path(f"images/templates/{path}")) * 255).astype(np.uint8)
 
         template = cv2.resize(template, size)
 
@@ -381,12 +415,12 @@ class Bot(EventDispatcher):
 
         template_settings = self.v(template_name)
 
-        _start = datetime.datetime.now()
+        _start = datetime.now()
         while True:
             if self.find_template(**template_settings, accuracy=accuracy):
                 return True
 
-            if self.stop() or (timeout and (datetime.datetime.now() - _start).total_seconds() > timeout):
+            if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
                 raise TimeoutError(f"Не найден шаблон '{self._variables[template_name].name}'")
             else:
                 time.sleep(.5)

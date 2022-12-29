@@ -14,6 +14,10 @@ import time
 
 import keyboard
 from kivy.config import Config
+from pip._internal.operations.freeze import freeze
+
+from common import resource_path
+
 Config.set('graphics', 'resizable', '1')
 Config.set('graphics', 'width', '1200')
 Config.set('graphics', 'height', '900')
@@ -48,6 +52,7 @@ from allignedtextinput import AlignedTextInput
 from bots import bots_list
 from task_tab import TaskBox, Stages
 from db_requests import Database
+from setting_tab import AppSettingTab, BotSettingTab  # для pyinstaller импорт тут, а не в controllpanel.kv
 
 
 app = MDApp.get_running_app()
@@ -56,7 +61,7 @@ app = MDApp.get_running_app()
 class ControlPanelApp(MDApp):
     v = "0.2.0"
 
-    anim_timer = None
+    _anim_timer = None
     bot = ObjectProperty()
     bots = ListProperty()
     current_task = NumericProperty(0)
@@ -66,6 +71,7 @@ class ControlPanelApp(MDApp):
     error_detail = StringProperty()
     extended_task = NumericProperty(0)
     first_run_animation_completed = BooleanProperty(True)
+    freeze = BooleanProperty(False)
     main = None
     need_break = BooleanProperty(False)
     need_stop_task = BooleanProperty(False)
@@ -92,6 +98,16 @@ class ControlPanelApp(MDApp):
             hotkey = "f11"
         keyboard.add_hotkey(hotkey, set_need_stop_task)
 
+        # hotkey_freeze
+        @mainthread
+        def set_freeze():
+            self.freeze = True
+
+        hotkey = self.s('any', 'hotkey_freeze')
+        if not hotkey:
+            hotkey = "alt+f11"
+        keyboard.add_hotkey(hotkey, set_freeze)
+
         # hotkey_break
         @mainthread
         def work_break():
@@ -109,23 +125,22 @@ class ControlPanelApp(MDApp):
 
         hotkey = self.s('any', 'hotkey_close')
         if not hotkey:
-            hotkey = "ctrl+f12"
+            hotkey = "alt+f12"
         keyboard.add_hotkey(hotkey, instant_exit)
 
     def add_task_buttons(self):
         buttons = self.main.ids.task_tab.ids.buttons
         buttons.clear_widgets()
 
-        if self.bot.task_tab_buttons:
-            for button_setting in self.bot.task_tab_buttons:
-                button = MDRectangleFlatIconButton()
-                button.opacity = 0 if not app.first_run_animation_completed else 1
-                button.icon = button_setting['icon']
-                button.size_hint_x = 1
-                button.text = button_setting['text']
-                button.bind(on_release=button_setting['func'])
+        for button_setting in self.bot.get_task_tab_buttons_settings():
+            button = MDRectangleFlatIconButton()
+            button.opacity = 0 if not app.first_run_animation_completed else 1
+            button.icon = button_setting['icon']
+            button.size_hint_x = 1
+            button.text = button_setting['text']
+            button.bind(on_release=button_setting['func'])
 
-                buttons.add_widget(button)
+            buttons.add_widget(button)
 
     def add_task_content(self):
         self.main.ids.task_tab.ids.content.clear_widgets()
@@ -171,6 +186,7 @@ class ControlPanelApp(MDApp):
 
         try:
             self.bot.set_empty_log()
+            self.bot.set_freeze(False)
             error = stage['func']()
             if error:
                 self.bot.update_log(level=2, text=error)
@@ -178,6 +194,12 @@ class ControlPanelApp(MDApp):
             error = str(e)
             self.error_detail = traceback.format_exc()
             self.bot.update_log(details=self.error_detail, level=1, text=error)
+
+            # TODO Временно тут
+            try:
+                self.bot.update_deal_history(last_stage=",".join([self.current_task, self.current_stage]))
+            except:
+                pass
 
         result = None
 
@@ -192,12 +214,6 @@ class ControlPanelApp(MDApp):
                 self.bot.update_deal_history(error=error)
             except:
                 pass
-
-        # TODO Временно тут
-        try:
-            self.bot.update_deal_history(last_stage=",".join([self.current_task, self.current_stage]))
-        except:
-            pass
 
         # TODO Временное решение, нужен более гибкий функционал записи времени выполнения участков этапов
         self.db.save_stage_lead_time(
@@ -227,7 +243,7 @@ class ControlPanelApp(MDApp):
     def init_config(self):
         try:
             config = configparser.ConfigParser(inline_comment_prefixes="#")
-            if not config.read('config.ini'):
+            if not config.read(resource_path('config.ini')):
                 raise FileNotFoundError
 
             self.db_path = config['common']['db_path']
@@ -475,8 +491,8 @@ class ControlPanelApp(MDApp):
                 task.completed_once = True
 
     def set_timer(self):
-        if self.anim_timer:
-            self.anim_timer.cancel(self)
+        if self._anim_timer:
+            self._anim_timer.cancel(self)
 
         if self.state == 'work':
             setting_timer = self.db.get_setting(self.bot.key, "bot_working")
@@ -486,9 +502,9 @@ class ControlPanelApp(MDApp):
             return
 
         self.timer = random.randint(*map(int, setting_timer.split(",")))
-        self.anim_timer = Animation(timer=0, d=self.timer)
-        self.anim_timer.bind(on_complete=self.on_complete_timer)
-        self.anim_timer.start(self)
+        self._anim_timer = Animation(timer=0, d=self.timer)
+        self._anim_timer.bind(on_complete=self.on_complete_timer)
+        self._anim_timer.start(self)
 
     def upload_tasks(self):
         self.current_task = 0

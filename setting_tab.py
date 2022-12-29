@@ -15,12 +15,6 @@ from kivymd.uix.snackbar import Snackbar
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.stacklayout import MDStackLayout
 from kivymd.uix.tab import MDTabs
-from kivymd.uix.textfield import MDTextField
-
-import cv2
-import numpy as np
-import pywintypes
-import win32gui
 
 import bots.common
 
