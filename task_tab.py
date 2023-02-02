@@ -104,10 +104,9 @@ class TaskBox(MDCard, RoundedRectangularElevationBehavior, ButtonBehavior):
             return
 
         if is_active:
-            app.start_by_task((self.index, 0))
+            Clock.schedule_once(lambda *_: app.start_by_task((self.index, 0)), 1)
         else:
             app.need_stop_task = True
-            app._handbrake = True
 
     def reset_timer(self):
         self.timer = self.task_time
@@ -129,6 +128,9 @@ class TaskBox(MDCard, RoundedRectangularElevationBehavior, ButtonBehavior):
             self._anim_timer.start(self)
 
     def stop(self):
+        if not self.active:
+            return
+
         self.active = False
         self.completed_once = True
         self.stop_timer()
@@ -162,7 +164,7 @@ class Stage(OneLineIconListItem):
             Snackbar(text="Для запуска действия нужно остановить текущее").open()
             return
 
-        app.start_by_task([app.extended_task, self.index])
+        Clock.schedule_once(lambda *_: app.start_by_task([app.extended_task, self.index]), 1)
 
 
 class Stages(MDCard):

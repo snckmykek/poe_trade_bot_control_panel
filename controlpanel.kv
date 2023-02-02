@@ -16,7 +16,9 @@
             theme_text_color: "ContrastParentBackground"
             on_release: app.choose_bot()
         CustomMDLabelButton:
-            text: app.status
+            text:
+                "[Старт: {}, Заморожен: {}, нужна остановка: {}] {}".format(app._start_strftime,\
+                app.freeze, app.need_stop_task, app.status)
             theme_text_color: "ContrastParentBackground"
             on_release: app.open_status()
         MDLabel:
@@ -157,7 +159,7 @@
             AppSettingTab:
                 id: app_settings
 
-<Tab@MDBoxLayout+MDTabsBase>
+<Tab>
     padding: "5dp"
 
 <CustomMDLabelButton@ButtonBehavior+MDLabel>

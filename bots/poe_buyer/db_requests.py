@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 
 
 class Database:
@@ -9,6 +10,7 @@ class Database:
         self.cur = self.con.cursor()
         self.sqlite_create_db()
         self.initial_setup()
+        self.lock = threading.Lock()
 
     def commit(self):
         self.con.commit()
@@ -48,7 +50,6 @@ class Database:
                 character_name TEXT NOT NULL,
                 completed BOOL NOT NULL,
                 error TEXT DEFAULT "",
-                last_stage TEXT NOT NULL,
                 item TEXT NOT NULL,
                 qty INT NOT NULL,
                 c_price REAL NOT NULL,
@@ -57,14 +58,14 @@ class Database:
             ) 
             """)
 
-        # Блеклист
+        # Черный список
         self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS blacklist(
                 date INT NOT NULL,
                 character_name TEXT NOT NULL,
                 good BOOL NOT NULL,
-                bad BOOL NOT NULL,
+                skipped BOOL NOT NULL,
                 CONSTRAINT pk PRIMARY KEY (date, character_name) ON CONFLICT REPLACE
             ) 
             """)
@@ -99,37 +100,40 @@ class Database:
 
     def save_items(self, values):
 
-        self.cur.execute(
-            f"""
-            DELETE FROM
-                items
-            """
-        )
+        with self.lock:
+            self.cur.execute(
+                f"""
+                DELETE FROM
+                    items
+                """
+            )
 
-        self.cur.execute(
-            f"""
-            INSERT INTO
-                items
-            VALUES
-                {','.join(map(str, values))}
-            """
-        )
-        self.commit()
+            self.cur.execute(
+                f"""
+                INSERT INTO
+                    items
+                VALUES
+                    {','.join(map(str, values))}
+                """
+            )
+            self.commit()
 
     def change_item_qty(self, item, delta_qty):
 
-        self.cur.execute(
-            f"""
-            UPDATE
-                items
-            SET
-                max_qty = max_qty + ?
-            WHERE
-                item = ?
-            """,
-            [delta_qty, item]
-        )
-        self.commit()
+        with self.lock:
+            self.cur.execute(
+                f"""
+                UPDATE
+                    items
+                SET
+                    max_qty = max_qty + ?
+                WHERE
+                    item = ?
+                """,
+                [delta_qty, item]
+            )
+
+            self.commit()
 
     def save_poe_items(self, values):
 
@@ -168,24 +172,27 @@ class Database:
         else:
             where = f'WHERE items.item IS NOT NULL'
 
-        self.cur.execute(
-            f"""
-            SELECT 
-                poe_items.item,
-                poe_items.name,
-                poe_items.image,
-                IFNULL(items.use, False) as use,
-                IFNULL(items.max_price, 0) as max_price,
-                IFNULL(items.bulk_price, 0) as bulk_price,
-                IFNULL(items.max_qty, 0) as max_qty
-            FROM
-                poe_items
-                LEFT JOIN items
-                    ON poe_items.item = items.item
-            {where}
-            """)
+        with self.lock:
+            self.cur.execute(
+                f"""
+                SELECT 
+                    poe_items.item,
+                    poe_items.name,
+                    poe_items.image,
+                    IFNULL(items.use, False) as use,
+                    IFNULL(items.max_price, 0) as max_price,
+                    IFNULL(items.bulk_price, 0) as bulk_price,
+                    IFNULL(items.max_qty, 0) as max_qty
+                FROM
+                    poe_items
+                    LEFT JOIN items
+                        ON poe_items.item = items.item
+                {where}
+                """)
 
-        return self.cur.fetchall()
+            result = self.cur.fetchall()
+
+        return result
 
     def get_categories(self):
 
@@ -243,7 +250,7 @@ class Database:
             INSERT INTO 
                 deals_history
             VALUES
-                (?,?,?,?,?,?,?,?,?,?,?)
+                (?,?,?,?,?,?,?,?,?,?)
             """,
             values
         )
@@ -252,47 +259,79 @@ class Database:
 
     def get_last_deals(self, qty=10):
 
-        self.cur.execute(
-            """
-            SELECT 
-                id
-            FROM
-                deals_history
-            ORDER BY date DESC LIMIT ?
-            """,
-            (qty,)
-            )
+        with self.lock:
+            self.cur.execute(
+                """
+                SELECT 
+                    id
+                FROM
+                    deals_history
+                ORDER BY date DESC LIMIT ?
+                """,
+                (qty,)
+                )
 
-        return [r['id'] for r in self.cur.fetchall()]
+            result = [r['id'] for r in self.cur.fetchall()]
+
+        return result
 
     def update_blacklist(self, values):
 
-        self.cur.execute(
-            """
-            INSERT INTO 
-                blacklist
-            VALUES
-                (?,?,?,?)
-            """,
-            values
-        )
+        with self.lock:
+            self.cur.execute(
+                """
+                INSERT INTO 
+                    blacklist
+                VALUES
+                    (?,?,?,?)
+                """,
+                values
+            )
 
-        self.commit()
+            self.commit()
 
     def checkin_blacklist(self, character_name):
 
-        self.cur.execute(
-            """
-            SELECT 
-                IFNULL(SUM(bad - good), 0) as bads
-            FROM
-                blacklist
-            WHERE
-                character_name = ?
-            """,
-            (character_name,)
-            )
+        with self.lock:
+            self.cur.execute(
+                """
+                SELECT 
+                    IFNULL(SUM(skipped - good), 0) as skipped
+                FROM
+                    blacklist
+                WHERE
+                    character_name = ?
+                """,
+                (character_name,)
+                )
 
-        result = self.cur.fetchone()
+            result = self.cur.fetchone()
 
-        return result['bads'] >= 10
+        return result['skipped'] >= 10
+
+    def get_blacklist(self):
+
+        with self.lock:
+            self.cur.execute(
+                """
+                SELECT
+                    character_name
+                FROM
+                    (SELECT
+                        character_name as character_name, 
+                        IFNULL(SUM(skipped - good), 0) as skipped,
+                        IFNULL(SUM(good), 0) as good
+                    FROM
+                        blacklist
+                    WHERE
+                        DATETIME(date, 'unixepoch') > DATETIME('now', '-24 hours')
+                    GROUP BY
+                        character_name)
+                WHERE
+                    skipped >= 5 and good == 0
+                """
+                )
+
+            result = [row['character_name'] for row in self.cur.fetchall()]
+
+        return result

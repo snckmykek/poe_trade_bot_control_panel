@@ -1,3 +1,4 @@
+import traceback
 from datetime import datetime
 import os
 from dataclasses import dataclass
@@ -27,6 +28,22 @@ dwmapi = ctypes.WinDLL("dwmapi")
 
 
 class Bot(EventDispatcher):
+
+    """"""
+
+    """
+    Очередь на контроль мышкой и клавиатурой. 
+    Перед любым действием с дивайсами, функция должна ставать в очередь на получение контроля. Если кроме нее нет 
+    никого, кто пользуется девайсами, она получает контроль, иначе ждет.
+    После использования девайсов, нужно отпустить контроль.
+    
+    Пример использования:
+    self.take_control('func_1')
+    some_actions_with_mouse() 
+    self.release_control('func_1')
+    """
+    _control_queue = []
+
     """Ссылка на объект приложения"""
     app = MDApp.get_running_app()
 
@@ -36,12 +53,6 @@ class Bot(EventDispatcher):
     Обязательно задается до инициализации
     """
     icon: str = 'presentation-play'
-
-    """
-    Можно использовать для своих ботов, чтобы "приостанавливать" их по хоткею, не останавливая всю платформу.
-    При старте любого этапа всегда устанавливается False
-    """
-    freeze: bool = False
 
     """Любой словарь для удобства хранения логов в процессе выполнения этапа (после - сохраняется в БД и обнуляется)"""
     log: dict = {}
@@ -55,6 +66,9 @@ class Bot(EventDispatcher):
 
     """Ключ бота. Используется для пути до папки с шаблонами 'images/templates/{key}', имени БД '{key}.bd' и прочее"""
     key: str = "bot"
+
+    """Если флаг взведен, то обновляет кэшированные значения у объектов из _variables"""
+    need_update_cached_variables_values: bool = True
 
     """
     Список задач и этапов в формате:
@@ -142,44 +156,95 @@ class Bot(EventDispatcher):
     def __init__(self):
         super(Bot, self).__init__()
 
-        # hotkey change_freeze
-        def change_freeze():
-            self.freeze = not self.freeze
-            print(f"self.freeze = {self.freeze}")
-
-        import keyboard
-        keyboard.add_hotkey("ctrl+f11", change_freeze)
-
         self.app = MDApp.get_running_app()
 
-    def check_freeze(self):
-        while self.freeze:
-            time.sleep(.5)
+    @staticmethod
+    def check_freeze():
+        MDApp.get_running_app().check_freeze()
+
+    def execute_step(self, task_number, step_number):
+
+        result = {'error': "", 'error_details': "", 'goto': None}
+
+        step = self.get_step(task_number, step_number)
+
+        self.set_empty_log()
+
+        try:
+            self.check_freeze()
+            step['func']()
+        except Exception as e:
+            result['error'] = str(e)
+            result['error_details'] = traceback.format_exc()
+            self.update_log(details=result['error_details'], level=1, text=result['error'])
+            self.save_log()
+
+            if step.get('on_error') and step['on_error'].get('goto'):
+                result['goto'] = step['on_error'].get('goto')
+
+        return result
+
+    def get_task(self, task_number):
+        try:
+            task = self.tasks[task_number]
+        except Exception as e:
+            raise ValueError(f"Не удалось получить Задачу № {task_number}\n" + str(e) +
+                             "\nОбратитесь к разработчику бота.")
+
+        return task
+
+    def get_step(self, task_number, step_number):
+
+        task = self.get_task(task_number)
+
+        try:
+            step = task['stages'][step_number]
+        except Exception as e:
+            raise ValueError(f"Не удалось получить Шаг № {step_number} задачи № {task_number}\n" + str(e) +
+                             "\nОбратитесь к разработчику бота.")
+
+        return step
+
+    def get_step_fullname(self, task_number, step_number):
+        task = self.get_task(task_number)
+        step = self.get_step(task_number, step_number)
+
+        return f"{task['name']}: {step['name']}"
 
     def get_task_tab_buttons_settings(self):
         return self.task_tab_buttons
 
+    def get_task_tab_content(self):
+        if self.task_tab_content:
+            return self.task_tab_content
+        else:
+            return Widget()
+
     def on_variables_setting(self, *_):
         self._variables = {v.key: v for list_v in self.variables_setting.values() for v in list_v}
 
-    def set_freeze(self, freeze):
-        self.freeze = freeze
-
     def v(self, variable_name):
         """Возвращает значение переменной по ее имени. В случае ее отсутствия в БД вызывает ошибку"""
+
+        if self.need_update_cached_variables_values:
+            for var in self._variables.values():
+                var.update_cached_value()
+
+            self.set_need_update_cached_variables_values(False)
 
         variable = self._variables.get(variable_name)
 
         if not variable:
             raise NameError(f"Переменной с именем '{variable_name}' нет в списке переменных бота")
 
-        return variable.value()
+        return variable.get_cached_value()
 
     def stop(self):
         return self.app.need_stop_task
 
     # region Логирование
     def set_empty_log(self):
+        # TODO Переделать логирование либо в БД бота, либо ваще убрать, так как сейчас - говно
         """
         Назначение/очистка пустого словаря лога. Назначается каждый раз перед выполнением этапа задачи.
         Для наследуемых классов следует переопределить функцию.
@@ -191,6 +256,9 @@ class Bot(EventDispatcher):
             'level': 0,
             'text': ""
         }
+
+    def set_need_update_cached_variables_values(self, new_state=True):
+        self.need_update_cached_variables_values = new_state
 
     def open_log(self):
         """
@@ -229,6 +297,10 @@ class Bot(EventDispatcher):
         if details:
             self.log['details'] += '\n' + details
 
+    def print_log(self, text):
+        # TODO: Заглушка, пока пишем в консоль
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
+
     # endregion
 
     # region Общие функции
@@ -241,7 +313,7 @@ class Bot(EventDispatcher):
 
         variable = self._variables[variable_key]
         variable_value = self.v(variable_key)
-        
+
         _start = datetime.now()
 
         if isinstance(variable, Template):  # Шаблон
@@ -273,25 +345,43 @@ class Bot(EventDispatcher):
                 self.check_freeze()
 
                 x, y, w, h = _xywh
-                pyautogui.moveTo(to_global(variable_value['region'], [x + w * offset_x, y + h * offset_y]))
-                pyautogui.click(clicks=clicks)
-                time.sleep(.3)
+                self.move_mouse_and_click(to_global(variable_value['region'], [x + w * offset_x, y + h * offset_y]),
+                                          clicks)
 
         elif isinstance(variable, Coord):  # Координаты
             if variable.type == 'coord':
-                pyautogui.moveTo(variable_value)
-                pyautogui.click(clicks=clicks)
+                self.move_mouse_and_click(variable_value, clicks)
             elif variable.type == 'coord_list':
                 for coord in variable_value:
-                    self.check_freeze()
-                    pyautogui.moveTo(coord)
-                    pyautogui.click(clicks=clicks)
+                    self.move_mouse_and_click(coord, clicks)
                     time.sleep(.1)
+            elif variable.type == 'region':
+                x, y, w, h = variable_value
+                self.move_mouse_and_click([x + w * offset_x, y + h * offset_y], clicks)
+
+    def move_mouse(self, move_to):
+        self.check_freeze()
+
+        self.take_control('move_mouse')
+        pyautogui.moveTo(move_to)
+        time.sleep(.035)
+        self.release_control('move_mouse')
+
+    def move_mouse_and_click(self, move_to, clicks=1):
+        self.check_freeze()
+
+        self.take_control('move_mouse')
+        pyautogui.moveTo(move_to)
+        time.sleep(.035)
+        pyautogui.click(clicks=clicks, interval=.015)
+        time.sleep(.015)
+        self.release_control('move_mouse')
 
     # Найти по шаблону
     def find_template(self, region, path, size, accuracy=None, mode: Literal['once', 'all'] = 'once', use_mask=False,
-                      is_item=False):
+                      is_item=False, move_to_1_1=True):
         """
+        :param move_to_1_1:
         :param is_item: Если это предмет, добавляем в маску область, где указано количество, чтобы не учитывать
             при поиске по шаблону,
         :param use_mask: Нужно ли использовать маску по альфа-каналу (то есть для прозрачных пнгшек та область, где
@@ -347,7 +437,8 @@ class Bot(EventDispatcher):
             accuracy += (avg_value - 70) / 1000
 
         # 2. Поиск
-        pyautogui.moveTo(1, 1)
+        if move_to_1_1:
+            self.move_mouse([1, 1])
         img_rgb = np.array(pyautogui.screenshot(region=region))
         img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
 
@@ -357,28 +448,6 @@ class Bot(EventDispatcher):
         result[np.isnan(result)] = 0
         result[np.isinf(result)] = 0
 
-        # region test
-        # result2 = cv2.matchTemplate(img_gray, template, cv2.TM_SQDIFF_NORMED, mask=mask)
-        # result2[np.isnan(result)] = 0
-        # result2[np.isinf(result)] = 0
-        # result3 = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED, mask=mask)
-        # result3[np.isnan(result)] = 0
-        # result3[np.isinf(result)] = 0
-        #
-        # cv2.imshow(
-        #     f'TM_CCORR_NORMED {result.max()}, TM_SQDIFF_NORMED {result2.max()}, TM_CCOEFF_NORMED {result3.max()}',
-        #     np.concatenate(
-        #         [
-        #             result,
-        #             result2,
-        #             result3
-        #         ]
-        #     )
-        # )
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-        # endregion
-
         if result.max() < accuracy:
             coord = cv2.minMaxLoc(result)[-1]
             cv2.rectangle(img_gray, coord, [coord[0] + template_size[1], coord[1] + template_size[0]], 255, 2)
@@ -386,38 +455,27 @@ class Bot(EventDispatcher):
             return
 
         if mode == 'once':  # Возвращаем координаты максимально совпадающего шаблона
-            if self.app.s(self.key, 'debug'):
-                print(path, result.max(), accuracy)
-
             coord = cv2.minMaxLoc(result)[-1]
             return [*coord, *template_size[::-1]]  # template_size указан как [y, x] - меняем местами
         elif mode == 'all':  # Очищаем от наложения и возвращаем список координат всех найденных шаблонов
 
-            # Получаем все совпадения с необходимой точностью совпадения
+            # Получаем все совпадения с необходимой точностью
             coords = sorted(list(zip(*np.where(result >= accuracy))), reverse=True)
 
             # Отсекаем пересекающиеся области, оставляем только уникальные
             pick = non_max_suppression(np.array(
                 [(x, y, x + template_size[1], y + template_size[0]) for (y, x) in coords]))
 
-            if self.app.s(self.key, 'debug'):
-                print(path, len(pick), result.max(), accuracy)
-
-                for p in pick:
-                    cv2.rectangle(img_gray, p[:2], p[-2:], 255, 2)
-
-                cv2.imwrite(f"images/screenshots/errors/{self.log['date']}_debug.jpeg", img_gray)
-
             return [[start_x, start_y, end_x - start_x, end_y - start_y] for (start_x, start_y, end_x, end_y) in pick]
 
-    def wait_for_template(self, template_name, timeout=0, accuracy=None):
+    def wait_for_template(self, template_name, timeout=0, accuracy=None, move_to_1_1=True):
         """Ищет по шаблону пока не найдет или не нужно будет завершать задачу"""
 
         template_settings = self.v(template_name)
 
         _start = datetime.now()
         while True:
-            if self.find_template(**template_settings, accuracy=accuracy):
+            if self.find_template(**template_settings, accuracy=accuracy, move_to_1_1=move_to_1_1):
                 return True
 
             if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
@@ -443,10 +501,36 @@ class Bot(EventDispatcher):
 
     # endregion
 
+    # region Управление контролем
+
+    def take_control(self, owner):
+        """Пример использования см. _control_queue"""
+
+        if owner in self._control_queue:
+            raise ValueError(f"Нарушена последовательность работы контроля. Для '{owner}' уже получен контроль.")
+
+        self._control_queue.append(owner)
+
+        while owner != self._control_queue[0]:
+            time.sleep(.5)
+
+    def release_control(self, owner):
+        """Пример использования см. _control_queue"""
+
+        try:
+            self._control_queue.remove(owner)
+        except ValueError:
+            raise ValueError(f"Нарушена последовательность работы контроля. У '{owner}' нет контроля на данный момент.")
+
+    def reset_control_queue(self):
+        self._control_queue.clear()
+
+    # endregion
+
 
 # region Окна
 
-def get_window_param(window_key, p: Literal["xywh", "xy", "wh", "h"] = 'xywh'):
+def get_window_param(window_key, p: Literal["xywh", "xy", "wh", "h", "xywh_hwnd"] = 'xywh'):
     """
     :param window_key: Ключ окна из bot.windows. Если нужно узнать имя окна приложения, см. функцию all_windows()
     :param p: Параметр возвращаемых данных
@@ -458,12 +542,12 @@ def get_window_param(window_key, p: Literal["xywh", "xy", "wh", "h"] = 'xywh'):
     if not window_settings['name']:
         return [0, 0, GetSystemMetrics(0), GetSystemMetrics(1)]
 
-    hwnd = win32gui.FindWindow(None,  window_settings['name'])
+    hwnd = win32gui.FindWindow(None, window_settings['name'])
 
     try:
         window_ext = win32gui.GetWindowRect(hwnd)  # Внешние рамки окна с учетом теней и шапки
     except pywintypes.error:
-        raise WindowsError(f"Не найдено окно с именем { window_settings['name']}")
+        raise WindowsError(f"Не найдено окно с именем {window_settings['name']}")
 
     header_rect = RECT()
     DWMWA_CAPTION_BUTTON_BOUNDS = 5  # Параметр для получения координат кнопок в шапке окна
@@ -501,6 +585,8 @@ def get_window_param(window_key, p: Literal["xywh", "xy", "wh", "h"] = 'xywh'):
         return [w, h]
     elif p == 'h':
         return h
+    elif p == 'xywh_hwnd':
+        return [x, y, w, h, hwnd]
     else:
         return [x, y, w, h]
 
@@ -530,6 +616,9 @@ def to_global(window_pos, coords):
 @dataclass
 class Variable:
     """"""
+
+    """Кешированное значение переменной, чтобы не запрашивать из БД"""
+    cached_value = None
 
     """Допустимые значения типа для класса"""
     verifiable = {
@@ -577,6 +666,15 @@ class Variable:
 
     def get_window_key(self):
         return self.window_info['key']
+
+    def update_cached_value(self):
+        self.cached_value = self.value()
+
+    def value(self):
+        return None
+
+    def get_cached_value(self):
+        return self.cached_value
 
 
 class Coord(Variable):

@@ -23,24 +23,32 @@
                     size_hint_x: None
                     width: self.height
         SettingRow:
+            id: hotkey_interrupt_step
+            text: "Досрочное прерывание текущего действия"
+            type: "str"
+            MDTextField:
+                size_hint_x: .45
+                text:
+                    hotkey_interrupt_step.value if hotkey_interrupt_step.value is not None else ""
+                on_text: hotkey_interrupt_step.set_value(self.text)
+        SettingRow:
+            id: hotkey_freeze
+            text: "Заморозить (приостановить все действия)"
+            type: "str"
+            MDTextField:
+                size_hint_x: .45
+                text:
+                    hotkey_freeze.value if hotkey_freeze.value is not None else ""
+                on_text: hotkey_freeze.set_value(self.text)
+        SettingRow:
             id: hotkey_break
-            text: "Пауза (будет ждать завершения всех действий)"
+            text: "Перерыв (будет ждать завершения всех действий)"
             type: "str"
             MDTextField:
                 size_hint_x: .45
                 text:
                     hotkey_break.value if hotkey_break.value is not None else ""
                 on_text: hotkey_break.set_value(self.text)
-        SettingRow:
-            id: hotkey_stop_action
-            text: "Остановка текущего действия"
-            type: "str"
-            MDTextField:
-                size_hint_x: .45
-                text:
-                    hotkey_stop_action.value \
-                    if hotkey_stop_action.value is not None else ""
-                on_text: hotkey_stop_action.set_value(self.text)
         SettingRow:
             id: hotkey_close
             text: "Мгновенное завершение программы"

@@ -1,35 +1,20 @@
-"""
-Приложение работает в основном потоке, действия выполняются в других потоках.
-Любая кнопка запуска всегда обращается к функции приложения, которое делает 2 вещи: отображает графически запуск
-    действия (запускает таймер и прочее) и запускает поток с функцией этапа действия.
-Останавливать действие (отображать это графически) может только функция этапа по своему окончанию (вызывает функцию
-    app.on_complete_stage в основном потоке). Функция может закончиться
-    в 3 случаях: выполнена, ошибка, просьба от приложения из основного потока (То есть для досрочной остановки действия,
-    нужно поднять флаг app.need_stop_action).
-"""
-
 # Настройки окна, должны быть до импорта графических объектов
-import os
-import time
-
-import keyboard
 from kivy.config import Config
-from pip._internal.operations.freeze import freeze
-
-from common import resource_path
 
 Config.set('graphics', 'resizable', '1')
 Config.set('graphics', 'width', '1200')
 Config.set('graphics', 'height', '900')
 
 # Общие
-from datetime import datetime, timezone, timedelta
+import os
+import time
+import keyboard
+from datetime import datetime
 import configparser
 import random
 import sqlite3
 import textwrap
 import threading
-import traceback
 
 # Киви
 from kivy.animation import Animation
@@ -46,10 +31,12 @@ from kivymd.uix.dialog import MDDialog
 from kivymd.uix.list import OneLineIconListItem, OneLineAvatarListItem
 from kivymd.uix.selectioncontrol import MDCheckbox
 from kivymd.uix.snackbar import Snackbar
+from kivymd.uix.tab import MDTabsBase
 
 # Из проекта
 from allignedtextinput import AlignedTextInput
 from bots import bots_list
+from common import resource_path
 from task_tab import TaskBox, Stages
 from db_requests import Database
 from setting_tab import AppSettingTab, BotSettingTab  # для pyinstaller импорт тут, а не в controllpanel.kv
@@ -62,13 +49,14 @@ class ControlPanelApp(MDApp):
     v = "0.2.0"
 
     _anim_timer = None
+    _start_strftime = datetime.now().strftime('%H:%M:%S')
     bot = ObjectProperty()
     bots = ListProperty()
     current_task = NumericProperty(0)
     current_stage = NumericProperty(0)
     db = None
     db_path = ""
-    error_detail = StringProperty()
+    error_details = StringProperty()
     extended_task = NumericProperty(0)
     first_run_animation_completed = BooleanProperty(True)
     freeze = BooleanProperty(False)
@@ -80,7 +68,6 @@ class ControlPanelApp(MDApp):
     state = StringProperty('break', options=['break', 'work'])
     tasks_obj = ListProperty([])
     timer = NumericProperty(0)
-    _handbrake = False  # TODO Временное решение, нужно отслеживать, поставился ли need_stop_task вручную или программно
 
     def __init__(self, **kwargs):
         super(ControlPanelApp, self).__init__(**kwargs)
@@ -88,25 +75,34 @@ class ControlPanelApp(MDApp):
 
     def set_hotkeys(self):
 
-        # hotkey_stop_action
+        # hotkey_interrupt_step
         @mainthread
         def set_need_stop_task():
             self.need_stop_task = True
 
-        hotkey = self.s('any', 'hotkey_stop_action')
+        # hotkey = self.s('any', 'hotkey_interrupt_step')
+        hotkey = None
         if not hotkey:
             hotkey = "f11"
         keyboard.add_hotkey(hotkey, set_need_stop_task)
 
+        # def print_pressed_keys(e):
+        #     print(
+        #         'кнопка {}: {}'.format(e.event_type, e.name)
+        #     )
+        #
+        # keyboard.hook(print_pressed_keys)
+
         # hotkey_freeze
         @mainthread
-        def set_freeze():
-            self.freeze = True
+        def switch_freeze():
+            self.freeze = not self.freeze
 
-        hotkey = self.s('any', 'hotkey_freeze')
+        # hotkey = self.s('any', 'hotkey_freeze')
+        hotkey = None
         if not hotkey:
             hotkey = "alt+f11"
-        keyboard.add_hotkey(hotkey, set_freeze)
+        keyboard.add_hotkey(hotkey, switch_freeze)
 
         # hotkey_break
         @mainthread
@@ -143,10 +139,9 @@ class ControlPanelApp(MDApp):
             buttons.add_widget(button)
 
     def add_task_content(self):
-        self.main.ids.task_tab.ids.content.clear_widgets()
-
-        if self.bot.task_tab_content:
-            self.main.ids.task_tab.ids.content.add_widget(self.bot.task_tab_content)
+        task_content_box = self.main.ids.task_tab.ids.content
+        task_content_box.clear_widgets()
+        task_content_box.add_widget(self.bot.get_task_tab_content())
 
     def build(self):
         self.theme_cls.theme_style = "Dark"
@@ -154,6 +149,10 @@ class ControlPanelApp(MDApp):
         if not self.main:
             self.main = MainScreen()
         return self.main
+
+    def check_freeze(self):
+        while self.freeze:
+            time.sleep(.5)
 
     def choose_bot(self):
         if self.state != 'break':
@@ -177,50 +176,24 @@ class ControlPanelApp(MDApp):
         dialog.open()
 
     def execute_current_stage(self, *args):
-        stage = self.bot.tasks[self.current_task]['stages'][self.current_stage]
-
-        if self.s(self.bot.key, 'test'):
-            time.sleep(1)
 
         _start = datetime.now()
 
-        try:
-            self.bot.set_empty_log()
-            self.bot.set_freeze(False)
-            error = stage['func']()
-            if error:
-                self.bot.update_log(level=2, text=error)
-        except Exception as e:
-            error = str(e)
-            self.error_detail = traceback.format_exc()
-            self.bot.update_log(details=self.error_detail, level=1, text=error)
+        result = self.bot.execute_step(self.current_task, self.current_stage)
 
-            # TODO Временно тут
-            try:
-                self.bot.update_deal_history(last_stage=",".join([self.current_task, self.current_stage]))
-            except:
-                pass
+        error_occurred = bool(result.get('error', ""))
 
-        result = None
-
-        if error:
-            result = {'text': error}
-            if stage.get('on_error'):
-                result.update(stage.get('on_error'))
-
-            # Пока написано тут, но в будущем нужно в бота вообще всю эту функцию перенести
-            #  (это относится только к конкретному боту, а не к любому)
-            try:
-                self.bot.update_deal_history(error=error)
-            except:
-                pass
-
-        # TODO Временное решение, нужен более гибкий функционал записи времени выполнения участков этапов
         self.db.save_stage_lead_time(
-            (_start.timestamp(), stage['name'], (datetime.now() - _start).total_seconds(), not error)
+            (_start.timestamp(), self.bot.get_step_fullname(self.current_task, self.current_stage),
+            (datetime.now() - _start).total_seconds(), not error_occurred)
         )
 
-        self.on_complete_stage(self, error=result)
+        self.check_freeze()
+
+        if error_occurred:
+            self.on_error_stage(result)
+        else:
+            self.on_complete_stage()
 
     def display_stages(self, new_extended_task):
 
@@ -274,31 +247,16 @@ class ControlPanelApp(MDApp):
         return False
 
     @mainthread
-    def on_complete_stage(self, obj, error=None):
+    def on_complete_stage(self):
 
         _debug = self.s(self.bot.key, 'debug')
-        if self.need_stop_task or _debug or error is not None:  # Нужно остановить задачи
-            # Статус текущего этапа
-            self.stages_box.set_current_status('error' if error else 'stopped')
+        if self.need_stop_task or _debug:
 
-            # Деактивация визуала текущей задачи
-            if self.tasks_obj[self.current_task].active:
-                self.tasks_obj[self.current_task].stop()
+            self.stages_box.set_current_status('stopped')
 
-            error_text, goto = "", None
-            if isinstance(error, str):
-                error_text = error
-            elif isinstance(error, dict):
-                if error.get('text'):
-                    error_text = error.get('text')
-                if error.get('func'):
-                    error.get('func')()
-                goto = error.get('goto')
+            self.tasks_obj[self.current_task].stop()
 
-            if error_text:
-                self.set_status(f"Ошибка: {error_text}", True, True)
-                self.bot.save_log()
-            elif _debug:
+            if _debug:
                 self.set_status(f"Остановлен: Debug (не запускать следующий этап)", True, True)
             elif self.need_stop_task:
                 self.set_status(f"Остановлен: Вручную или по времени", True, True)
@@ -307,11 +265,26 @@ class ControlPanelApp(MDApp):
                 self.request_break()
                 return
 
-            if goto and not _debug and not self._handbrake:
-                self.start_stage(goto)
-
         else:  # Запускаем следующий этап
             self.start_stage()
+
+    @mainthread
+    def on_error_stage(self, result):
+
+        self.stages_box.set_current_status('error')
+
+        self.tasks_obj[self.current_task].stop()
+
+        self.set_status(f"Ошибка: {result['error']}", True, True)
+        self.error_details = result['error_details']
+
+        if self.need_break:
+            self.request_break()
+            return
+
+        goto = result.get('goto')
+        if goto and not self.s(self.bot.key, 'debug'):
+            self.start_stage(goto)
 
     def on_complete_timer(self, *args):
         if self.state == 'work':
@@ -326,6 +299,8 @@ class ControlPanelApp(MDApp):
         global app
         app = MDApp.get_running_app()
 
+        self.set_hotkeys()
+
         self.stages_box = Stages()
 
         current_bot = self.s('any', 'current_bot')
@@ -334,12 +309,10 @@ class ControlPanelApp(MDApp):
         else:
             self.choose_bot()
 
-        self.set_hotkeys()
-
     def open_status(self):
         dialog = MDDialog(
             title=self.status,
-            text=self.error_detail,
+            text=self.error_details,
             buttons=[
                 MDFlatButton(
                     text="OK",
@@ -423,11 +396,11 @@ class ControlPanelApp(MDApp):
         self.start_stage(goto)
 
     def start_stage(self, goto=None):
+        self.check_freeze()
+
         if self.state != 'work':
             self.start(goto)
             return
-
-        self._handbrake = False
 
         _current_task = self.current_task
         if self.set_current_stage(goto):
@@ -436,7 +409,7 @@ class ControlPanelApp(MDApp):
             if self.current_task != _current_task:
                 self.tasks_obj[_current_task].stop()
 
-            self.error_detail = "Нет деталей ошибки"
+            self.error_details = "Нет деталей ошибки"
             self.need_stop_task = False
             self.set_status("Выполняю", True, True)
 
@@ -534,31 +507,6 @@ class ControlPanelApp(MDApp):
         self.main.ids.task_tab.ids.tasks_parent.clear_widgets()
         for task_obj in self.tasks_obj:
             self.main.ids.task_tab.ids.tasks_parent.add_widget(task_obj)
-
-    def upload_variables(self):
-        def _value(row):
-            if row['type'] == 'template':
-                values = row['value'].split(", ")
-                return {
-                    'relative': (row['window_resolution'] == 'relative'),
-                    'path': f"{self.bot.key}/{row['window_resolution']}/{values[0]}",
-                    'size': list(map(float, values[1:3]))
-                }
-            elif row['type'] == 'region' or row['type'] == 'coord':
-                return {
-                    'relative': (row['window_resolution'] == 'relative'),
-                    'value': list(map(float, row['value'].split(", ")))
-                }
-            elif row['type'] == 'coord_list':
-                coord_list = list(map(float, row['value'].split(", ")))
-                return {
-                    'relative': (row['window_resolution'] == 'relative'),
-                    'value': zip(coord_list[::2], coord_list[1::2])
-                }
-            else:
-                return row['value']
-
-        self.bot._variables = {row['key']: _value(row) for row in gv.db.get_variables(self.bot.key)}
 
 
 class MainScreen(MDBoxLayout):
@@ -670,6 +618,10 @@ class BotChangeItem(OneLineAvatarListItem):
     bot_class = ObjectProperty()
     divider = None
     icon = StringProperty()
+
+
+class Tab(MDBoxLayout, MDTabsBase):
+    pass
 
 
 if __name__ == "__main__":

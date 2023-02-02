@@ -11,7 +11,7 @@
 
 <Statistic@CustomMDCard>
     elevation: 10
-    height: '100dp'
+    height: '135dp'
     padding: ['10dp', '10dp']
     radius: [0,0,0,0]
     size_hint_y: None
@@ -28,7 +28,7 @@
     BoxLayout:
         orientation: 'vertical'
         size_hint_x: None
-        width: '120dp'
+        width: '140dp'
         padding: ['12dp', 0, 0, 0]
         canvas:
             Color:
@@ -54,6 +54,10 @@
                 size: dp(36), dp(36)
             MDLabel:
                 text: " x {}".format(app.bot.swag['divine'])
+        MDLabel:
+            text:
+                "D: {},  C: {}".format(app.bot.divine_price,
+                "1/{}".format(int(1/app.bot.chaos_price)) if app.bot.chaos_price else 0)
     BoxLayout:
         orientation: 'vertical'
         padding: ['12dp', 0, 0, 0]
@@ -69,7 +73,31 @@
             text:
                 "Общий профит: {} div".format(round(app.bot.stat['profit']/app.bot.divine_price, 1) \
                 if app.bot.divine_price else 0)
+        MDLabel:
+            text: "Осталось купить: {}".format(app.bot.items_left)
+    BoxLayout:
+        orientation: 'vertical'
+        padding: ['12dp', 0, 0, 0]
+        canvas:
+            Color:
+                rgba: app.theme_cls.primary_color
+            Line:
+                width: 1
+                points: [self.x, self.y, self.x, self.y + self.height]
+        MDBoxLayout:
+            spacing: '20dp'
+            ToggleDealSortType:
+                text: 'profit_per_each'
+            ToggleDealSortType:
+                text: 'profit'
+        Widget:
+        Widget:
 
+<ToggleDealSortType@MDFlatButton+MDToggleButton>:
+    group: 'x'
+    md_bg_color: app.theme_cls.primary_color[:3] + [.7 if app.bot.deal_sort_type == self.text else 0]
+    on_release:
+        app.bot.set_deal_sort_type(self.text)
 
 <Deals@MDBoxLayout>
     orientation: 'vertical'
@@ -132,21 +160,21 @@
             id: current_deal
             divider_color: [0, 0, 0, 0]
             text:
-                "Ник: {}".format(app.bot.current_deal['character_name'])
+                "Ник: {}".format(app.bot.current_deal_dict['character_name'])
             secondary_text:
-                "Всего: {}, цена за шт: {}/{} {}".format(\
-                app.bot.current_deal['available_item_stock'], \
-                app.bot.current_deal['exchange_amount'], \
-                app.bot.current_deal['item_amount'], \
-                app.bot.current_deal['exchange_currency'])
+                "x{}, цена за шт: {}/{} {}".format(\
+                app.bot.current_deal_dict['item_stock'], \
+                app.bot.current_deal_dict['currency_min_qty'], \
+                app.bot.current_deal_dict['item_min_qty'], \
+                app.bot.current_deal_dict['currency'])
             tertiary_text:
-                "Профит: {}".format(app.bot.current_deal['profit'])
+                "Сумма: {}. Профит: {} c".format(app.bot.deal_amount_text(), app.bot.current_deal_dict['profit'])
             AsyncImageLeftWidget:
                 source:
-                    "https://web.poecdn.com{}".format(app.bot.current_deal['image']) if app.bot.current_deal['image'] \
-                    else ""
+                    "https://web.poecdn.com{}".format(app.bot.current_deal_dict['image']) \
+                    if app.bot.current_deal_dict['image'] else ""
                 color:
-                    [1, 1, 1, 1 if app.bot.current_deal['image'] else 0]
+                    [1, 1, 1, 1 if app.bot.current_deal_dict['image'] else 0]
                 pos_hint: {'center_x': .5, 'center_y': .5}
 
         Widget:
@@ -168,8 +196,8 @@
 
 <DealOneLineIconListItem>:
     text:
-        "x{}({}) Цена: {}/{} {}, профит: {}".format(self.item_stock, self.available_item_stock,
-        self.exchange_amount, self.item_amount, self.exchange_currency, self.profit)
+        "x{} Цена: {}/{} {}, профит: {}".format(self.item_stock,
+        self.currency_min_qty, self.item_min_qty, self.currency, self.profit)
     AsyncImageLeftWidget:
         color:
             [1, 1, 1, 1 if root.image else 0]
@@ -210,7 +238,7 @@
             theme_text_color: 'Custom'
         MDLabel:
             size_hint_x: .2
-            text: "Макс цена"
+            text: "Макс цена (в хаосах)"
         MDLabel:
             size_hint_x: .2
             text: "Балк цена"
@@ -344,3 +372,9 @@
 
 
 <AsyncImageLeftWidget@ILeftBodyTouch+AsyncImage>:
+
+
+<Blacklist>:
+    MDScrollView:
+        MDList:
+            id: container

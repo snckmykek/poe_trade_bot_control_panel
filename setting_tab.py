@@ -300,6 +300,8 @@ class VariablesBox(MDBoxLayout):
 
         app.db.save_bots_variable(variables)
 
+        app.bot.set_need_update_cached_variables_values()
+
     def delete_row(self, row):
         if row.window_resolution == 'relative':
             self.ids.variables_relative.remove_widget(row)

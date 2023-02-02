@@ -1,0 +1,1 @@
+from bots.poe_elder.bot import PoeElder as Bot

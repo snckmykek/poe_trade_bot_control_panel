@@ -1,10 +1,11 @@
-import math
-import os
-from os.path import dirname
+import time
+from dataclasses import dataclass
+from operator import itemgetter
 
-import cv2
+import keyboard
 import numpy as np
-import pytesseract
+import pyautogui
+import pyperclip
 from kivy.lang import Builder
 from kivy.metrics import dp
 from kivy.properties import StringProperty
@@ -57,117 +58,203 @@ def text_is_correct(text_type, value):
             return False
 
 
-# region Картинка в число
-def clear_noise(thresh_original):
-    thresh = cv2.bitwise_not(thresh_original)
+# region Виртуальный инвентарь
 
-    # ищем контуры и складируем их в переменную contours
-    contours, hierarchy = cv2.findContours(thresh.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+@dataclass
+class VirtualInventory:
+    """
+    """
 
-    new = np.zeros([*thresh.shape[:2], 1], dtype=np.uint8)
+    rows = 0
+    cols = 0
+    cells_matrix = np.empty([0, 0])
 
-    contours = list(filter(lambda c: cv2.boundingRect(c)[3] < thresh.shape[0] / 2, contours))
+    def __init__(self, rows, cols):
+        self.rows = rows
+        self.cols = cols
+        self.set_empty_cells_matrix()
 
-    # отображаем контуры поверх изображения
-    for i in range(len(contours)):
-        cv2.drawContours(new, contours, i, 255, thickness=cv2.FILLED)
+    def set_empty_cells_matrix(self):
+        self.cells_matrix = np.empty([self.rows, self.cols], dtype=Cell)
 
-    for y in range(new.shape[0]):
-        for x in range(new.shape[1]):
-            if new[y][x] == 255:
-                thresh_original[y][x] = 255
+        rows, cols = self.cells_matrix.shape
+
+        for row in range(rows):
+            for col in range(cols):
+                self.cells_matrix[row][col] = Cell(row, col)
+
+    def get_first_cell(self, item='empty') -> tuple:
+        sorted_cells = self.get_sorted_cells(item)
+
+        if not sorted_cells:
+            raise ValueError(f"Не удалось получить первую ячейку. В инвентаре нет ни одной ячейки с '{item}'")
+
+        return sorted_cells[0]
+
+    def get_last_cell(self, item='empty') -> tuple:
+        sorted_cells = self.get_sorted_cells(item)
+
+        if not sorted_cells:
+            raise ValueError(f"Не удалось получить последнюю ячейку. В инвентаре нет ни одной ячейки с '{item}'")
+
+        return sorted_cells[-1]
+
+    def get_sorted_cells(self, item, exclude=False):
+
+        cells_with_item = self.get_cells(item, exclude)
+
+        return sorted(cells_with_item, key=itemgetter(1))
+
+    def get_cells(self, item, exclude):
+
+        get_item = np.vectorize(Cell.get_content)
+
+        if exclude:
+            cells = list(
+                        zip(
+                            *np.where(get_item(self.cells_matrix) != item)
+                        )
+                    )
+        else:
+            cells = list(
+                        zip(
+                            *np.where(get_item(self.cells_matrix) == item)
+                        )
+                    )
+
+        return cells
+
+    def put_item(self, item, qty=1, cell_coord=None):
+        if cell_coord:
+            row, col = cell_coord
+        else:
+            row, col = self.get_first_cell()
+
+        cell = self.cells_matrix[row][col]
+        cell.put(item, qty)
+
+    def empty_cell(self, row, col):
+        cell = self.cells_matrix[row][col]
+        cell.empty()
+
+    def get_qty(self, cell_coord):
+        row, col = cell_coord
+        cell = self.cells_matrix[row][col]
+        return cell.get_qty()
 
 
-def image_to_int(image, chan):
-    # TODO Изменить расчет x_slice, y_slice
-    # TODO Расчет занимает в среднем 0.35 сек и состоит из 3 частей: обрезание картинки (0.07с),
-    #  удаление контуров меньше трети высоты картинки (0.08с), нейронка распознавания числа (0.2с)
-    #  оптимизировать можно только первые 2 пункта, но нужно ли? 99% случаев обработать нужно будет 1-2 картинки
-    # cv2.imshow('original5', image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+@dataclass
+class Cell:
+    _empty = 'empty'
+    _row: int
+    _col: int
 
-    # Конвертируем в черно-белый
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    content: str = _empty
+    qty: int = 0
 
-    try:  # Пытаемся обрезать по цифре, но при неудаче просто пропускаем этот этап
-        points_x = []
-        points_y = []
+    def __init__(self, row, col):
+        self._row = row
+        self._col = col
 
-        x_start = -1
-        y_start = -1
+    def get_content(self):
+        return self.content
 
-        for y in range(image.shape[0]):
-            for x in range(image.shape[1]):
-                if image[y][-1 - x] == 0:
-                    points_x.append(image.shape[1] - x)
+    def get_qty(self):
+        return self.qty
 
-                    if y_start == -1:
-                        y_start = y
-                    break
+    def put(self, content, qty):
+        if self.content != self._empty:
+            raise ValueError(f"Не удалось положить предмет '{content}' в виртуальный инвентарь: "
+                             f"ячейка ({self._row}, {self._col}) не пуста.")
 
-        for x in range(image.shape[1]):
-            for y in range(image.shape[0]):
-                if image[-1 - y][x] == 0:
-                    points_y.append(image.shape[0] - y)
+        self.content = content
+        self.qty = qty
 
-                    if x_start == -1:
-                        x_start = x
-                    break
+    def empty(self):
+        if self.content == self._empty:
+            raise ValueError(f"Не удалось изъять предмет из виртуального инвентаря: "
+                             f"ячейка ({self._row}, {self._col}) пуста.")
 
-        points_x = sorted(points_x, reverse=True)
-        while True:
-            if points_x[0] - points_x[1] > 1:
-                points_x.pop(0)
-            else:
-                break
+        self.content = self._empty
+        self.qty = 0
 
-        points_y = sorted(points_y, reverse=True)
-        while True:
-            if points_y[0] - points_y[1] > 1:
-                points_y.pop(0)
-            else:
-                break
 
-        x_slice = math.ceil(sum(points_x) / len(points_x))
-        y_slice = math.ceil(sum(points_y) / len(points_y))
+class ItemTransporter:
+    pass
 
-        sliced = image[y_start: y_slice, x_start: x_slice]
 
-        image = np.zeros([sliced.shape[0] + 2, sliced.shape[1] + 2, 1], np.uint8)
+def get_item_info(keys: list, cell_coord: list) -> dict:
+    pyautogui.moveTo(cell_coord)
+    time.sleep(.035)
 
-        for y in range(sliced.shape[0]):
-            for x in range(sliced.shape[1]):
-                image[y + 1][x + 1] = sliced[y][x]
+    item_info = {}
 
-    except Exception as e:
-        print(e)
+    item_info_text = get_item_info_text_from_clipboard()
+    if not item_info_text:
+        return item_info
 
-    # Изменяем размер изображения, чтобы нейронке лучше понималось
-    scale_percent = 35 / image.shape[0]
-    width = int(image.shape[1] * scale_percent)
-    height = int(image.shape[0] * scale_percent)
-    dim = (width, height)
-    image = cv2.resize(image, dim, interpolation=cv2.INTER_CUBIC)
+    item_info_parts = [[line for line in part.split('\r\n') if line] for part in item_info_text.split('--------')]
 
-    # Отделяем цифры (вместе с мусором) по яркости белого
-    _, threshold_image = cv2.threshold(image, chan, 255, 1, cv2.THRESH_BINARY)
+    for key in keys:
+        value = find_item_info_by_key(item_info_parts, key)
+        item_info.update({key: value})
 
-    # Удаляем мусор (контуры меньше трети высоты картинки - это не цифры)
-    clear_noise(threshold_image)
+    return item_info
 
-    # cv2.imshow('image', threshold_image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
 
-    threshold_image = cv2.resize(threshold_image, [dim[0] * 2, dim[1] * 2], interpolation=cv2.INTER_CUBIC)
+def get_item_info_text_from_clipboard():
+    pyperclip.copy("")
+    time.sleep(.015)
+    keyboard.send(['ctrl', 46])  # ctrl+c (англ.)
+    time.sleep(.035)
+    item_info_text = pyperclip.paste()
 
-    result = pytesseract.image_to_string(
-        threshold_image, config='--psm 10 --oem  3 -c tessedit_char_whitelist=0123456789')
-    result = result.replace("\n", "")
+    return item_info_text
 
-    try:
-        return int(result)
-    except ValueError:
-        return 0
+
+def find_item_info_by_key(item_info_parts, key):
+
+    def get_value_after_startswith(startswith, default_value):
+        line = find_line_startswith(item_info_parts, startswith)
+        if line:
+            return line.split(startswith)[1]
+        else:
+            return default_value
+
+    if key == 'item_class':
+        value = get_value_after_startswith("Item Class: ", "")
+
+    elif key == 'rarity':
+        value = get_value_after_startswith("Rarity: ", "")
+
+    elif key == 'quantity':
+        str_value = get_value_after_startswith("Stack Size: ", "1/1").split('/')[0]
+        value = int(str_value.replace("\xa0", ""))  # мб неразрывный пробел \xa0 (1 234 567)
+
+    elif key == 'ilvl':
+        value = get_value_after_startswith("Item Level: ", "")
+    elif key == 'item_name':
+        rarity = find_item_info_by_key(item_info_parts, 'rarity')
+
+        # Для уников название в 1 части ровно в 3 строке из 4,
+        #  а для других - в последней (3 или 4, в зависимости от рарности)
+        if rarity == "Unique":
+            value = item_info_parts[0][2]
+        else:
+            value = item_info_parts[0][-1]
+
+    else:
+        raise KeyError(f"Для ключа '{key}' не указан алгоритм получения информации по предмету")
+
+    return value
+
+
+def find_line_startswith(item_info_parts, startswith):
+    for item_info_lines in item_info_parts:
+        for line in item_info_lines:
+            if line.startswith(startswith):
+                return line
+
+    return ""
+
 # endregion

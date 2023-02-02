@@ -1,10 +1,6 @@
 import os
-import time
-
-import cv2
-import numpy as np
-import pyautogui
 import requests
+
 from kivy.animation import Animation
 from kivy.lang import Builder
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty, ListProperty, OptionProperty, \
@@ -14,9 +10,10 @@ from kivy.uix.image import AsyncImage
 from kivymd.app import MDApp
 from kivymd.uix.behaviors.ripple_behavior import CommonRipple
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDRectangleFlatIconButton, MDRectangleFlatButton
+from kivymd.uix.button import MDRectangleFlatIconButton, MDRectangleFlatButton, MDFlatButton
 from kivymd.uix.list import OneLineIconListItem
 from kivymd.uix.snackbar import Snackbar
+
 
 from bots.common import CustomDialog, text_is_correct
 
@@ -326,7 +323,7 @@ def update_poe_items():
         "Origin": "https://www.pathofexile.com",
         "Accept-Encoding": "gzip,deflate,br",
         "Accept-Language": "q=0.9,en-US;q=0.8,en;q=0.7",
-        "Cookie": f"POESESSID={MDApp.get_running_app().bot.v('POESESSID')}"
+        "Cookie": f"POESESSID={MDApp.get_running_app().bot.v('trade_POESESSID')}"
     }
 
     # Ссылка для запроса к странице с балком
@@ -342,19 +339,26 @@ def update_poe_items():
     for category in response['result']:
         for item in category['entries']:
             items.append(
-                (category['label'], item['id'], item['text'], item['image'] if item.get('image') else ""))
+                (category['label'], item['id'], item_name_from_text(item['text']), item.get('image', "")))
 
     app.bot.db.save_poe_items(items)
 
 
+def item_name_from_text(text):
+    """
+    К названию карт прибавлен их уровень в скобочках - убираем. Cortex (Tier 10) -> Cortex.
+    Остальное останется без изменений
+    """
+    return text.split(' (')[0]
+
+
 class DealOneLineIconListItem(OneLineIconListItem):
-    item_currency = StringProperty()
-    exchange_currency = StringProperty()
+    item = StringProperty()
+    currency = StringProperty()
     image = StringProperty()
-    item_amount = NumericProperty()
-    exchange_amount = NumericProperty()
+    item_min_qty = NumericProperty()
+    currency_min_qty = NumericProperty()
     item_stock = NumericProperty()
-    available_item_stock = NumericProperty()
     profit = NumericProperty()
 
 
@@ -369,3 +373,111 @@ class OneLineQueue(OneLineIconListItem):
         'error': 'close-circle'
     }
 
+
+class Blacklist(MDBoxLayout):
+    title = "Черный список"
+    dialog_parent = ObjectProperty()
+    buttons = []
+
+    def __init__(self, **kwargs):
+        super(Blacklist, self).__init__(**kwargs)
+
+        global app
+        app = MDApp.get_running_app()
+
+        self.buttons = [
+            {
+                'text': "Закрыть",
+                'icon': 'window-close',
+                'on_release': self.close
+            },
+        ]
+
+    def on_pre_open(self, *args):
+        self.load_blacklist()
+
+    def close(self, *args):
+        self.dialog_parent.dismiss()
+
+    def load_blacklist(self):
+        self.ids.container.clear_widgets()
+        for character_name in MDApp.get_running_app().bot.db.get_blacklist():
+            element = OneLineIconListItem(text=character_name)
+            self.ids.container.add_widget(
+                element
+            )
+
+
+class PriceChecker(MDBoxLayout):
+    title = "Прайс чеккер"
+    dialog_parent = ObjectProperty()
+    buttons = []
+
+    def __init__(self, **kwargs):
+        super(PriceChecker, self).__init__(**kwargs)
+
+        global app
+        app = MDApp.get_running_app()
+
+        self.buttons = [
+            {
+                'text': "Подобрать",
+                'icon': 'find-replace',
+                'on_release': self.open_item_selector
+            },
+            {
+                'text': "Обновить все (каждый итем по времени = 22с/кол-во прокси)",
+                'icon': 'window-close',
+                'on_release': self.update_all
+            },
+            {
+                'text': "Закрыть",
+                'icon': 'window-close',
+                'on_release': self.close
+            },
+
+        ]
+
+    def close(self, *args):
+        self.dialog_parent.dismiss()
+
+    def update_all(self):
+        pass
+
+    def open_item_selector(self, *args):
+        dialog = CustomDialog(
+            auto_dismiss=False,
+            title="Подбор предметов",
+            type="custom",
+            content_cls=ItemSelector(),
+            buttons=[
+                MDRectangleFlatIconButton(
+                    icon='refresh',
+                    text="Обновить с сайта ПОЕ",
+                    theme_text_color="Custom",
+                    text_color=app.theme_cls.primary_color,
+                ),
+                MDRectangleFlatIconButton(
+                    icon='close',
+                    text="Отменить",
+                    theme_text_color="Custom",
+                    text_color=app.theme_cls.primary_color,
+                ),
+                MDRectangleFlatIconButton(
+                    icon='content-save-outline',
+                    text="Сохранить",
+                    theme_text_color="Custom",
+                    text_color=app.theme_cls.primary_color,
+                ),
+            ],
+        )
+
+        dialog.content_cls.dialog_parent = dialog
+        dialog.content_cls.change_items_func = self.change_items
+        dialog.content_cls.selected_items = [item.item for item in self.ids.items_box.children]
+        dialog.buttons[0].bind(on_release=lambda *_: dialog.content_cls.reload_categories())
+        dialog.buttons[0].bind(on_release=lambda *_: update_poe_items())
+        dialog.buttons[1].bind(on_release=dialog.dismiss)
+        dialog.buttons[2].bind(on_release=dialog.content_cls.save)
+        dialog.bind(on_pre_open=dialog.content_cls.on_pre_open)
+        dialog.open()
