@@ -8,7 +8,7 @@ from kivymd.app import MDApp
 from kivy.clock import Clock
 
 from bots.bot import Bot, Coord
-from bots.poe_craft.additional_functional import Content1 as Content
+from bots.poe.craft.additional_functional import Content1 as Content
 
 app = MDApp.get_running_app()
 
@@ -133,9 +133,9 @@ class PoeCraft(Bot):
         pyautogui.keyUp('shift')
 
     def move_alt_to_item(self):
-        self.move_mouse(self.v('coord_alt'))
+        self.mouse_move(self.v('coord_alt'))
         pyautogui.click(button='right')
-        self.move_mouse(self.v('coord_item'))
+        self.mouse_move(self.v('coord_item'))
 
     @staticmethod
     def check_mode(region_frame):

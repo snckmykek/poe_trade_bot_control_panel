@@ -23,12 +23,14 @@ import win32gui
 from win32api import GetSystemMetrics
 
 from common import resource_path
+from controllers import mouse_controller
 
 dwmapi = ctypes.WinDLL("dwmapi")
+pyautogui.FAILSAFE = False  # Прекращает работу при наведении в левый верхний угол (если надо прекратить ошибочный код)
+pyautogui.PAUSE = 0  # Задержка после каждого действия. В проекте предусмотрены свои задержки
 
 
 class Bot(EventDispatcher):
-
     """"""
 
     """
@@ -157,6 +159,16 @@ class Bot(EventDispatcher):
         super(Bot, self).__init__()
 
         self.app = MDApp.get_running_app()
+
+        self.variables_setting = {
+            'Общие настройки': [
+                Simple(
+                    key='button_delay_ms',
+                    name="Дополнительная задержка после действий мыши и клавиатуры (ms)",
+                    type='int'
+                ),
+            ]
+        }
 
     @staticmethod
     def check_freeze():
@@ -303,6 +315,47 @@ class Bot(EventDispatcher):
 
     # endregion
 
+    # region Управление мышью и клавиатурой
+
+    def mouse_move(self, x, y, sleep_after=.0, duration=.0):
+        self.check_freeze()
+        self._mouse_move(x, y, sleep_after, duration)
+
+    def mouse_move_and_click(self, x, y, sleep_after=.0, duration=.0, clicks=1, interval=.0):
+        self.check_freeze()
+        self._mouse_move(x, y, sleep_after, duration)
+        self._mouse_click(x, y, sleep_after, clicks, interval)
+
+    def mouse_click(self, x=None, y=None, sleep_after=.0, clicks=1, interval=.0):
+        self.check_freeze()
+        self._mouse_click(x, y, sleep_after, clicks, interval)
+
+    def _mouse_move(self, x, y, sleep_after=.0, duration=.0):
+        pyautogui.moveTo(x, y, duration=duration)
+        time.sleep(.015 + sleep_after + self.v('button_delay_ms') / 1000)
+
+    def _mouse_click(self, x=None, y=None, sleep_after=.0, clicks=1, interval=.0):
+        pyautogui.click(x, y, clicks=clicks, interval=interval)
+        time.sleep(.015 + sleep_after + self.v('button_delay_ms') / 1000)
+
+    def key_down(self, key, sleep_after=.0):
+        self.check_freeze()
+        self._key_down(key, sleep_after)
+
+    def _key_down(self, key, sleep_after):
+        pyautogui.keyDown(key)
+        time.sleep(.015 + sleep_after + self.v('button_delay_ms') / 1000)
+
+    def key_up(self, key, sleep_after=.0):
+        self.check_freeze()
+        self._key_up(key, sleep_after)
+
+    def _key_up(self, key, sleep_after):
+        pyautogui.keyUp(key)
+        time.sleep(.025 + sleep_after + self.v('button_delay_ms') / 1000)
+
+    # endregion
+
     # region Общие функции
     def click_to(self, variable_key, offset_x=.5, offset_y=.5, clicks=1, wait_template=True, accuracy=None, timeout=0):
         """
@@ -314,93 +367,164 @@ class Bot(EventDispatcher):
         variable = self._variables[variable_key]
         variable_value = self.v(variable_key)
 
+        if isinstance(variable, Template):
+            self._click_to_template(variable, variable_key, offset_x, offset_y,
+                                    clicks, wait_template, accuracy, timeout, variable_value['region'])
+        elif isinstance(variable, Coord):
+            self._click_to_coord(variable, variable_value, offset_x, offset_y, clicks)
+
+    def _click_to_template(
+            self, variable, template, offset_x, offset_y, clicks, wait_template, accuracy, timeout, region):
+
+        def mode_from_type(variable_type):
+            if variable_type == 'template':
+                mode_: Literal['once', 'all'] = 'once'
+            else:
+                mode_: Literal['once', 'all'] = 'all'
+            return mode_
+
         _start = datetime.now()
+        while True:
+            xywh = self.find_template(template, mode=mode_from_type(variable.type), accuracy=accuracy)
 
-        if isinstance(variable, Template):  # Шаблон
+            if not xywh and not wait_template:  # Если шаблона нет, то и не нужно на него кликать
+                return
 
-            while True:
+            if xywh:
+                break
 
-                if variable.type == 'template':
-                    mode: Literal['once', 'all'] = 'once'
-                else:
-                    mode: Literal['once', 'all'] = 'all'
+            if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
+                raise TimeoutError(f"Не найден шаблон '{variable.name}'")
+            else:
+                time.sleep(.5)
 
-                xywh = self.find_template(**variable_value, mode=mode, accuracy=accuracy)
+        if variable.type == 'template':
+            xywh = [xywh, ]
 
-                if not xywh and not wait_template:  # Если шаблона нет, то и не нужно на него кликать
-                    return
-
-                if xywh:
-                    break
-
-                if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
-                    raise TimeoutError(f"Не найден шаблон '{variable.name}'")
-                else:
-                    time.sleep(.5)
-
-            if variable.type == 'template':
-                xywh = [xywh, ]
-
+        with mouse_controller:
             for _xywh in xywh:
-                self.check_freeze()
-
                 x, y, w, h = _xywh
-                self.move_mouse_and_click(to_global(variable_value['region'], [x + w * offset_x, y + h * offset_y]),
-                                          clicks)
+                self.mouse_move_and_click(
+                    *to_global(region, [x + w * offset_x, y + h * offset_y]), clicks=clicks, sleep_after=.5)
 
-        elif isinstance(variable, Coord):  # Координаты
+    def _click_to_coord(self, variable, variable_value, offset_x, offset_y, clicks):
+        with mouse_controller:
             if variable.type == 'coord':
-                self.move_mouse_and_click(variable_value, clicks)
+                self.mouse_move_and_click(*variable_value, clicks=clicks)
             elif variable.type == 'coord_list':
                 for coord in variable_value:
-                    self.move_mouse_and_click(coord, clicks)
+                    self.mouse_move_and_click(*coord, clicks=clicks)
                     time.sleep(.1)
             elif variable.type == 'region':
                 x, y, w, h = variable_value
-                self.move_mouse_and_click([x + w * offset_x, y + h * offset_y], clicks)
+                self.mouse_move_and_click(x + w * offset_x, y + h * offset_y, clicks=clicks)
 
-    def move_mouse(self, move_to):
-        self.check_freeze()
-
-        self.take_control('move_mouse')
-        pyautogui.moveTo(move_to)
-        time.sleep(.035)
-        self.release_control('move_mouse')
-
-    def move_mouse_and_click(self, move_to, clicks=1):
-        self.check_freeze()
-
-        self.take_control('move_mouse')
-        pyautogui.moveTo(move_to)
-        time.sleep(.035)
-        pyautogui.click(clicks=clicks, interval=.015)
-        time.sleep(.015)
-        self.release_control('move_mouse')
-
-    # Найти по шаблону
-    def find_template(self, region, path, size, accuracy=None, mode: Literal['once', 'all'] = 'once', use_mask=False,
-                      is_item=False, move_to_1_1=True):
+    def find_template(
+            self, template, region=None, accuracy=None, mode: Literal['once', 'all'] = 'once', move_to_1_1=True):
         """
         :param move_to_1_1:
-        :param is_item: Если это предмет, добавляем в маску область, где указано количество, чтобы не учитывать
-            при поиске по шаблону,
         :param use_mask: Нужно ли использовать маску по альфа-каналу (то есть для прозрачных пнгшек та область, где
             картинка прозрачная, будет всегда совпадение True),
         :param mode: 'once' - возвращает шаблон координаты с максимально подходящим совпадением, 'all' - список
             координат всех найденных шаблонов (с учетом очистки от наложения, то есть в отдельных областях),
         :param region: Область для скриншота в глобальных координатах в пикселях,
-        :param path: Путь до шаблона (будет использован путь: images/templates/{path}) или  полная url,
-        :param size: Размер шаблона в пикселях, к которому нужно привести полученный шаблон,
+        :param template: строка или словарь как в Template.value()
         :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.89,
         :return: [x, y, w, h] (x,y - левый верхний угол совпадения шаблона, w, h - ширина и высота шаблона)
         """
-
         self.check_freeze()
 
-        if accuracy is None:
-            accuracy = .89
+        if type(template) == str:
+            template = self.v(template)
 
-        # 1. Подготовка шаблона
+        if region is None:
+            region = template['region']
+
+        img = self.get_screen_region(region, move_to_1_1)
+
+        result_coords = self.match_templates(img, template, mode, accuracy)
+
+        return result_coords
+
+    def get_screen_region(self, region, move_to_1_1):
+        if move_to_1_1:
+            with mouse_controller:
+                self.mouse_move(1, 1)
+
+        img_rgb = np.array(pyautogui.screenshot(region=region))
+        img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+
+        return img_gray
+
+    def match_templates(self, img, template, mode, accuracy=None):
+
+        if type(template) == str:
+            template = self.v(template)
+
+        template_gray = template['template_gray']
+
+        template_size = template['size']
+        mask = template['mask']
+        if not accuracy:
+            accuracy = template['normalized_accuracy']
+
+        matches = cv2.matchTemplate(img, template_gray, cv2.TM_CCORR_NORMED, mask=mask)
+
+        # При использовании маски значения могут быть 'бесконечность', отсекаем
+        matches[np.isnan(matches)] = 0
+        matches[np.isinf(matches)] = 0
+
+        if matches.max() < accuracy:
+            coord = cv2.minMaxLoc(matches)[-1]
+            img_log = img.copy()
+            cv2.rectangle(img_log, coord, [coord[0] + template_size[0], coord[1] + template_size[1]], 255, 2)
+            self.log.update({'image': img_log, 'details': f"{str(matches.max())} < {accuracy}"})
+            return []
+
+        if mode == 'once':  # Возвращаем координаты максимально совпадающего шаблона
+            coord = cv2.minMaxLoc(matches)[-1]
+            return [*coord, *template_size]
+
+        elif mode == 'all':  # Очищаем от наложения и возвращаем список координат всех найденных шаблонов
+
+            all_coords = sorted(list(zip(*np.where(matches >= accuracy))), reverse=True)
+
+            # Отсекаем пересекающиеся области, оставляем только уникальные
+            unique_coords = non_max_suppression(np.array(
+                [(x, y, x + template_size[0], y + template_size[1]) for (y, x) in all_coords]))
+
+            return [
+                [start_x, start_y, end_x - start_x, end_y - start_y]
+                for (start_x, start_y, end_x, end_y) in unique_coords]
+
+    def wait_for_template(self, template_name, timeout=0, accuracy=None, move_to_1_1=True):
+        """Ищет шаблон пока не найдет или не нужно будет завершать задачу"""
+
+        _start = datetime.now()
+        while True:
+            if self.find_template(template_name, accuracy=accuracy, move_to_1_1=move_to_1_1):
+                return True
+
+            if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
+                raise TimeoutError(f"Не найден шаблон '{self._variables[template_name].name}'")
+            else:
+                time.sleep(.5)
+
+    # region Шаблоны
+
+    def get_template_params(self, template_path, template_size, accuracy=None, use_mask=None):
+        """
+        :return: template_gray, mask, normalized_accuracy
+        """
+        template = self.get_template(template_path, template_size)
+        mask = self.get_template_mask(template, use_mask)
+        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        normalized_accuracy = self.get_normalized_accuracy(accuracy, template_gray)
+
+        return {'template_gray': template_gray, 'mask': mask, 'normalized_accuracy': normalized_accuracy}
+
+    @staticmethod
+    def get_template(path, size):
         if path.startswith("http"):  # Это url
             template_b = requests.get(path).content
             template = np.asarray(bytearray(template_b), dtype="uint8")
@@ -410,24 +534,33 @@ class Bot(EventDispatcher):
 
         template = cv2.resize(template, size)
 
+        return template
+
+    @staticmethod
+    def get_template_mask(template, use_mask):
+        if not use_mask:
+            return None
+
         template_size = template.shape[:2]
-        if use_mask:
 
-            mask = np.zeros(template_size).astype('uint8')
-            for y in range(template_size[0]):
-                for x in range(template_size[1]):
-                    if is_item and y < template_size[0] * .4 and x < template_size[1] * .5:
-                        # Добавляем в маску область, где указано количество, чтобы не учитывать при поиске по шаблону
-                        mask[y][x] = 0
-                    else:
-                        mask[y][x] = template[y][x][3]
-        else:
-            mask = None
+        mask = np.zeros(template_size).astype('uint8')
+        for y in range(template_size[0]):
+            for x in range(template_size[1]):
+                try:
+                    mask[y][x] = template[y][x][3]
+                except IndexError:
+                    print("Попытка получить маску по шаблону без 4ого alpha-канала прозрачности")
+                    return None
 
-        template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        return mask
 
-        # Редактирование точности (алгоритм поиска светлые картинки на светлом фоне выделяет сильнее)
+    @staticmethod
+    def get_normalized_accuracy(accuracy, template):
+        # Редактирование точности (алгоритм поиска: светлые картинки на светлом фоне выделяет сильнее)
         # Все пиксели, кроме пустых (они будут вырезаны маской) и черных (так уж получилось, но это не влияет)
+        if accuracy is None:
+            accuracy = .89
+
         avg_value = np.average(template[template != 0])
         if avg_value < 40:
             accuracy -= .03
@@ -436,54 +569,11 @@ class Bot(EventDispatcher):
         else:
             accuracy += (avg_value - 70) / 1000
 
-        # 2. Поиск
-        if move_to_1_1:
-            self.move_mouse([1, 1])
-        img_rgb = np.array(pyautogui.screenshot(region=region))
-        img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        return accuracy
 
-        result = cv2.matchTemplate(img_gray, template, cv2.TM_CCORR_NORMED, mask=mask)
+    # endregion
 
-        # При использовании маски значения могут быть 'бесконечность', отсекаем
-        result[np.isnan(result)] = 0
-        result[np.isinf(result)] = 0
-
-        if result.max() < accuracy:
-            coord = cv2.minMaxLoc(result)[-1]
-            cv2.rectangle(img_gray, coord, [coord[0] + template_size[1], coord[1] + template_size[0]], 255, 2)
-            self.log.update({'image': img_gray, 'details': f"{str(result.max())} < {accuracy}"})
-            return
-
-        if mode == 'once':  # Возвращаем координаты максимально совпадающего шаблона
-            coord = cv2.minMaxLoc(result)[-1]
-            return [*coord, *template_size[::-1]]  # template_size указан как [y, x] - меняем местами
-        elif mode == 'all':  # Очищаем от наложения и возвращаем список координат всех найденных шаблонов
-
-            # Получаем все совпадения с необходимой точностью
-            coords = sorted(list(zip(*np.where(result >= accuracy))), reverse=True)
-
-            # Отсекаем пересекающиеся области, оставляем только уникальные
-            pick = non_max_suppression(np.array(
-                [(x, y, x + template_size[1], y + template_size[0]) for (y, x) in coords]))
-
-            return [[start_x, start_y, end_x - start_x, end_y - start_y] for (start_x, start_y, end_x, end_y) in pick]
-
-    def wait_for_template(self, template_name, timeout=0, accuracy=None, move_to_1_1=True):
-        """Ищет по шаблону пока не найдет или не нужно будет завершать задачу"""
-
-        template_settings = self.v(template_name)
-
-        _start = datetime.now()
-        while True:
-            if self.find_template(**template_settings, accuracy=accuracy, move_to_1_1=move_to_1_1):
-                return True
-
-            if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
-                raise TimeoutError(f"Не найден шаблон '{self._variables[template_name].name}'")
-            else:
-                time.sleep(.5)
-
-    # Если нужно узнать имя окна любого приложения
+    # Если нужно узнать инфу окон всех открытых приложений
     @staticmethod
     def all_windows():
 
@@ -498,32 +588,6 @@ class Bot(EventDispatcher):
             print("\t    Size: (%d, %d)" % (w, h))
 
         win32gui.EnumWindows(_callback, None)
-
-    # endregion
-
-    # region Управление контролем
-
-    def take_control(self, owner):
-        """Пример использования см. _control_queue"""
-
-        if owner in self._control_queue:
-            raise ValueError(f"Нарушена последовательность работы контроля. Для '{owner}' уже получен контроль.")
-
-        self._control_queue.append(owner)
-
-        while owner != self._control_queue[0]:
-            time.sleep(.5)
-
-    def release_control(self, owner):
-        """Пример использования см. _control_queue"""
-
-        try:
-            self._control_queue.remove(owner)
-        except ValueError:
-            raise ValueError(f"Нарушена последовательность работы контроля. У '{owner}' нет контроля на данный момент.")
-
-    def reset_control_queue(self):
-        self._control_queue.clear()
 
     # endregion
 
@@ -1032,21 +1096,27 @@ class Template(Variable):
         value = self._value()
 
         path = value[2]
-        size = list(map(float, value[:2]))
+        template_size = list(map(float, value[:2]))
         region = self.region.value()
 
         if self.relative:
-            size = to_pixels(size, self.window_info['size'][1])
+            template_size = to_pixels(template_size, self.window_info['size'][1])
         else:
-            size = list(map(int, size))
+            template_size = list(map(int, template_size))
 
         window_dir = "relative" if self.relative else 'x'.join(map(str, self.window_info['size']))
 
+        template_path = f"{MDApp.get_running_app().bot.key}/{window_dir}/{path}"
+
         value = {
-            'path': f"{MDApp.get_running_app().bot.key}/{window_dir}/{path}",
-            'size': size,
+            'path': template_path,
+            'size': template_size,
             'region': region
         }
+
+        template_params_by_bot = MDApp.get_running_app().bot.get_template_params(template_path, template_size)
+
+        value.update(template_params_by_bot)
 
         return value
 

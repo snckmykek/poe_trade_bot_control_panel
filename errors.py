@@ -1,0 +1,2 @@
+class StopStepError(Exception):
+    pass

@@ -7,7 +7,6 @@ import time
 from datetime import datetime
 from operator import itemgetter
 
-import cv2
 import keyboard as keyboard
 import pyautogui
 import numpy as np
@@ -21,8 +20,8 @@ from kivy.clock import Clock
 
 from bots.bot import Bot, Coord, Simple, Template, get_window_param
 from bots.common import CustomDialog, image_to_int
-from bots.poe_buyer.db_requests import Database
-from bots.poe_buyer.additional_functional import Content, Items
+from bots.poe.buyer import Database
+from bots.poe.buyer import Content, Items
 
 
 class PoeSeller(Bot):

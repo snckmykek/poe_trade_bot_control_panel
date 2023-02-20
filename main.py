@@ -40,6 +40,7 @@ from common import resource_path
 from task_tab import TaskBox, Stages
 from db_requests import Database
 from setting_tab import AppSettingTab, BotSettingTab  # для pyinstaller импорт тут, а не в controllpanel.kv
+from controllers import hotkey_controller
 
 
 app = MDApp.get_running_app()
@@ -84,14 +85,7 @@ class ControlPanelApp(MDApp):
         hotkey = None
         if not hotkey:
             hotkey = "f11"
-        keyboard.add_hotkey(hotkey, set_need_stop_task)
-
-        # def print_pressed_keys(e):
-        #     print(
-        #         'кнопка {}: {}'.format(e.event_type, e.name)
-        #     )
-        #
-        # keyboard.hook(print_pressed_keys)
+        hotkey_controller.add_hotkey(hotkey, set_need_stop_task)
 
         # hotkey_freeze
         @mainthread
@@ -102,7 +96,7 @@ class ControlPanelApp(MDApp):
         hotkey = None
         if not hotkey:
             hotkey = "alt+f11"
-        keyboard.add_hotkey(hotkey, switch_freeze)
+        hotkey_controller.add_hotkey(hotkey, switch_freeze)
 
         # hotkey_break
         @mainthread
@@ -112,7 +106,7 @@ class ControlPanelApp(MDApp):
         hotkey = self.s('any', 'hotkey_break')
         if not hotkey:
             hotkey = "f12"
-        keyboard.add_hotkey(hotkey, work_break)
+        hotkey_controller.add_hotkey(hotkey, work_break)
 
         # hotkey_close
         @mainthread
@@ -122,7 +116,7 @@ class ControlPanelApp(MDApp):
         hotkey = self.s('any', 'hotkey_close')
         if not hotkey:
             hotkey = "alt+f12"
-        keyboard.add_hotkey(hotkey, instant_exit)
+        hotkey_controller.add_hotkey(hotkey, instant_exit)
 
     def add_task_buttons(self):
         buttons = self.main.ids.task_tab.ids.buttons

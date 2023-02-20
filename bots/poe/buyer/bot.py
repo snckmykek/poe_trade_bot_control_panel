@@ -14,19 +14,19 @@ import pyautogui
 import numpy as np
 import requests
 import win32gui
-from kivy.properties import DictProperty, ListProperty, NumericProperty, BooleanProperty, ObjectProperty, StringProperty
+from kivy.properties import DictProperty, ListProperty, NumericProperty, BooleanProperty, StringProperty
 from kivymd.uix.button import MDRectangleFlatIconButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.snackbar import MDSnackbar
 from win32api import GetSystemMetrics
 from kivy.clock import Clock
 
-from bots.bot import Bot, Coord, Simple, Template, get_window_param, to_global
+from bots.bot import Coord, Simple, Template, get_window_param, to_global
 from bots.common import CustomDialog, VirtualInventory, get_item_info
-from bots.poe_buyer.db_requests import Database
-from bots.poe_buyer.additional_functional import Content, Items, Blacklist
-
-pyautogui.PAUSE = 0
+from bots.poe.poe_base import PoeBase
+from bots.poe.buyer.db_requests import Database
+from bots.poe.buyer.additional_functional import Content, Items, Blacklist
+from controllers import mouse_controller
 
 
 @dataclass
@@ -62,7 +62,7 @@ class DealPOETrade(dict):
         return self.__dict__.get(key, "")
 
 
-class PoeBuyer(Bot):
+class PoeBuyer(PoeBase):
     # Обязательные
     icon = 'account-arrow-left'
     name = "ПОЕ: Покупатель"
@@ -84,14 +84,13 @@ class PoeBuyer(Bot):
     start_deal_timestamp: int = 0
     stat: dict = DictProperty({'good': 0, 'skipped': 0, 'bad': 0, 'profit': 0})
     swag: dict = DictProperty({'chaos': 0, 'divine': 0})
-    tabs: list
     trade_thread: threading.Thread = None
     party_thread: threading.Thread = None
-    virtual_inventory: VirtualInventory = VirtualInventory(5, 12)
     whispers_history: dict = {}
     _last_poe_trade_request: int = 0
     _requests_interval: float = .0
 
+    # region init
     def __init__(self):
         super(PoeBuyer, self).__init__()
 
@@ -103,7 +102,6 @@ class PoeBuyer(Bot):
 
         Clock.schedule_once(self.delayed_init)
 
-    # region init
     def set_task_tab_buttons(self):
         self.task_tab_buttons = [
             {
@@ -360,8 +358,8 @@ class PoeBuyer(Bot):
                     type='int'
                 ),
                 Simple(
-                    key='additional_mouse_delay',
-                    name="Дополнительная задержка после действий мыши (ms)",
+                    key='button_delay_ms',
+                    name="Дополнительная задержка после действий мыши и клавиатуры (ms)",
                     type='int'
                 ),
             ],
@@ -628,7 +626,7 @@ class PoeBuyer(Bot):
         self.windows = {
             'main': {'name': ""},
             'poe': {'name': "Path of Exile", 'expression': ('x', 'y', 'w', 'h')},
-            'poe_except_inventory': {'name': "Path of Exile", 'expression': ('x', 'y', 'w - 0.6166 * h', 'h')}
+            'poe_except_inventory': {'name': "Path of Exile", 'expression': ('x', 'y', 'int(w - 0.6166 * h)', 'h')}
 
         }
 
@@ -718,7 +716,7 @@ class PoeBuyer(Bot):
 
         except Exception as e:
             result['error'] = str(e)
-            result['error_detail'] = traceback.format_exc()
+            result['error_details'] = traceback.format_exc()
 
             if step.get('on_error') and step['on_error'].get('goto'):
                 result['goto'] = step['on_error'].get('goto')
@@ -727,120 +725,6 @@ class PoeBuyer(Bot):
                 step['on_error']['func'](result)
 
         return result
-
-    # region Вход
-    def start_poe(self):
-        self.click_to('poe_icon', clicks=2)
-
-        # Ждем, пока нормально запустится ПОЕ (при запуске окно перемещается микросекунду)
-        window_name = "Path of Exile"
-        _window_params = None
-        while True:
-            if self.stop():
-                raise TimeoutError(f"Не запущено окно с именем {window_name}")
-
-            time.sleep(2)
-
-            try:
-                window_params = get_window_param('poe', 'xywh_hwnd')
-            except Exception as e:
-                continue
-
-            # Только когда в одном и том же месте окно находится - всё ок
-            if _window_params and window_params and _window_params == window_params:
-                # Выводим на передний план окно
-                win32gui.SetForegroundWindow(window_params[-1])
-                return
-            else:
-                _window_params = window_params
-
-    def authorization(self):
-        self.wait_for_template('template_login')
-
-        coord_y = self.v('coord_mail')[1]
-        self.moveTo(GetSystemMetrics(0) / 2, coord_y)
-        self.click(s=.1)
-        keyboard.send(['ctrl', 30])  # ctrl+a (англ.)
-        keyboard.write(self.v('login'), delay=0)
-
-        coord_y = self.v('coord_password')[1]
-        self.moveTo(GetSystemMetrics(0) / 2, coord_y)
-        self.click(s=.1)
-        keyboard.send(['ctrl', 30])  # ctrl+a (англ.)
-        keyboard.write(self.v('password'), delay=0)
-
-        self.click_to('template_login')
-
-    def moveTo(self, x, y, duration=.0):
-        pyautogui.moveTo(x, y, duration=duration)
-        time.sleep(.015 + self.v('additional_mouse_delay')/1000)
-
-    def click(self, x=None, y=None, s=.0, clicks=1, interval=0.0):
-        pyautogui.click(x, y, clicks=clicks, interval=interval)
-        time.sleep(.015 + s + self.v('additional_mouse_delay')/1000)
-
-    def choice_character(self):
-        self.wait_for_template('template_characters_choosing')
-
-        [keyboard.send('up') for _ in range(30)]
-        [keyboard.send('down') for _ in range(self.v('character_number') - 1)]
-
-        self.click_to('coord_play')
-
-    def clear_inventory(self):
-        region = self.v('region_inventory_fields')
-
-        rows = 12
-        cols = 5
-
-        x_reg = region[0]
-        y_reg = region[1]
-        w_cell = region[2] / rows
-        h_cell = region[3] / cols
-
-        max_attempts = self.v('max_attempts')
-        attempts = 0
-        while True:
-            self.open_stash()
-
-            self.close_x_tabs()
-
-            # Ждем, пока другой поток примет пати, если его кинули
-            if self.find_template(**self.v('template_accept'), move_to_1_1=False):
-                time.sleep(1.5)
-
-            self.take_control('clear_inventory')
-            self.moveTo(1, 1)
-            self.release_control('clear_inventory')
-            cells_matrix_from_screen = self.get_cells_matrix_from_screen(region)
-            non_empty_cells_coords = sorted(zip(*np.where(cells_matrix_from_screen == 0)), key=itemgetter(1))
-
-            if not len(non_empty_cells_coords):
-                break
-
-            if attempts > max_attempts:
-                raise TimeoutError(f"Не смог выложить предметы из инвентаря с {attempts} попыток")
-
-            self.check_freeze()
-
-            self.take_control('clear_inventory')
-
-            self.keyDown('ctrl')
-
-            for row, col in non_empty_cells_coords:
-                cell_coord = [x_reg + (col + .5) * w_cell, y_reg + (row + .5) * h_cell]
-                self.click(cell_coord, clicks=2, interval=.015)
-                time.sleep(.015 * attempts)
-
-            self.keyUp('ctrl')
-
-            self.release_control('clear_inventory')
-
-            attempts += 1
-
-        self.virtual_inventory.set_empty_cells_matrix()
-
-    # endregion
 
     # region Продажа. Запросы на ПОЕ трейд
     def start_poe_trade(self):
@@ -1055,7 +939,8 @@ class PoeBuyer(Bot):
                     deal = DealPOETrade()
                     deal.id = deal_id
                     deal.account_name = account_info['name']
-                    deal.character_name = account_info['lastCharacterName']
+                    deal.character_name = 'sverchok_ivan'
+                    # deal.character_name = account_info['lastCharacterName']
                     deal.currency = offer_info['exchange']['currency']
                     deal.currency_min_qty = offer_info['exchange']['amount']
                     deal.exchange_whisper = offer_info['exchange']['whisper']
@@ -1179,7 +1064,6 @@ class PoeBuyer(Bot):
                              f"(минимум: {min_chaos}), Divine: {self.swag['divine']} (минимум: {min_divine})")
 
         self.start_deal_timestamp = int(datetime.now().timestamp())
-        self.reset_control_queue()
 
         if not self.party_thread or not self.party_thread.is_alive():
             self.party_thread = threading.Thread(target=lambda *_: self.accept_party(), daemon=True)
@@ -1264,7 +1148,7 @@ class PoeBuyer(Bot):
 
     def request_deal(self):
         self.clear_logs()
-        self.send_to_chat(self.current_deal.whisper)
+        self.send_to_chat('@sverchok_ivan ' + self.current_deal.whisper[1:])
         self.whispers_history.update({self.current_deal.character_name: int(datetime.now().timestamp())})
 
         self.party_accepted = False
@@ -1281,26 +1165,6 @@ class PoeBuyer(Bot):
         self.update_swag()
         self.from_stash_to_inventory(self.current_deal.divine_qty, 'divine')
         self.from_stash_to_inventory(self.current_deal.chaos_qty, 'chaos')
-
-    def open_stash(self):
-        # Кликаем на надпись "STASH" пока не увидим признак открытого стеша или не закончится время
-        template_stash_header_settings = self.v('template_stash_header')
-
-        attempt = 0
-        while True:
-
-            if attempt > 3:
-                self.go_home(forced=True)
-
-            if self.find_template(**template_stash_header_settings):
-                return
-
-            self.click_to('template_stash')
-
-            if self.stop():
-                raise TimeoutError("Не смог открыть стеш")
-            else:
-                time.sleep(.5)
 
     # Временно использую clear_inventory
     def from_inventory_to_stash(self):
@@ -1330,16 +1194,15 @@ class PoeBuyer(Bot):
     def from_inventory_to_trade(self):
         inv_region = self.v('region_inventory_fields')
         trade_my_region = self.v('region_trade_inventory_fields_my')
-        trade_template_settings = self.v('template_trade')
 
         cells_for_empty = self.virtual_inventory.get_sorted_cells('empty', exclude=True)
 
         while True:
-            if not self.find_template(**trade_template_settings):
+            if not self.find_template('template_trade'):
                 raise TimeoutError("Трейд закрылся до завершения")
 
             self.items_from_cells(inv_region, cells_for_empty)
-            time.sleep(.75)
+            time.sleep(1)
 
             trade_cells_matrix = self.get_cells_matrix_from_screen(trade_my_region)
             trade_non_empty_cells = list(zip(*np.where(trade_cells_matrix == 0)))
@@ -1354,65 +1217,18 @@ class PoeBuyer(Bot):
         for row, col in cells:
             self.check_freeze()
 
-            self.take_control('items_from_cells')
-            self.keyDown('ctrl')
-            self.moveTo(int(region[0] + region[2] * (col + 0.5) / 12),
-                        int(region[1] + region[3] * (row + 0.5) / 5),
-                        .05)
-            self.click()
-            self.keyUp('ctrl')
-            self.release_control('items_from_cells')
+            with mouse_controller:
+                self.keyDown('ctrl')
+                self.mouse_move(int(region[0] + region[2] * (col + 0.5) / 12),
+                                int(region[1] + region[3] * (row + 0.5) / 5),
+                                .05)
+                self.mouse_click()
+                self.keyUp('ctrl')
 
     def try_to_open_currency_tab(self):
         self.open_stash()
-        self.move_mouse_and_click(self.v('coord_currency_tab'))
+        self.mouse_move_and_click(*self.v('coord_currency_tab'))
         time.sleep(1)
-
-    def get_cells_matrix_from_screen(self, region, item=None):
-        """
-        Возвращает 2-мерную матрицу, где 0 - пустая ячейка, 1 - заполненная найденным шаблоном (даже пустым)
-        :param item:
-        :param region:
-        :return:
-        """
-
-        if item:
-            item_size = [int(region[-2] / 12), int(region[-1] / 5)]
-            coords = self.find_template(
-                region, f"https://web.poecdn.com{self.db.get_poe_item_image(item)}",
-                item_size, mode='all', use_mask=True, is_item=True
-            )
-        else:
-            template_settings = self.v('template_empty_field')
-            coords = self.find_template(region, template_settings['path'], template_settings['size'], mode='all')
-
-        if not coords:
-            coords = []
-
-        cell_size = [int(region[3] / 5), int(region[2] / 12)]
-        inventory_cells = np.zeros([5, 12])
-        for x, y, w, h in coords:
-            index_y = math.floor((y + cell_size[0] / 2) / cell_size[0])
-            index_x = math.floor((x + cell_size[1] / 2) / cell_size[1])
-            inventory_cells[index_y][index_x] = 1
-
-        return inventory_cells
-
-    def close_x_tabs(self):
-        variable_value = self.v('template_x_button')
-
-        xywh = self.find_template(**variable_value, mode='all')
-
-        while xywh:
-            for _xywh in xywh:
-                self.check_freeze()
-
-                x, y, w, h = _xywh
-                self.move_mouse_and_click(to_global(variable_value['region'], [x + w * .5, y + h * .5]))
-
-            time.sleep(1)
-
-            xywh = self.find_template(**variable_value, mode='all')
 
     def from_stash_to_inventory(self, amount, currency):
 
@@ -1456,14 +1272,13 @@ class PoeBuyer(Bot):
         if last_cell_qty == stack_size:  # Полная ячейка
             return
 
-        self.take_control('empty_cell_with_remainder')
-        self.moveTo(int(inv_region[0] + inv_region[2] * (last_cell_coord[1] + 0.5) / 12),
-                    int(inv_region[1] + inv_region[3] * (last_cell_coord[0] + 0.5) / 5),
-                    .2)
-        self.keyDown('ctrl')
-        self.click()
-        self.keyUp('ctrl')
-        self.release_control('empty_cell_with_remainder')
+        with mouse_controller:
+            self.mouse_move(int(inv_region[0] + inv_region[2] * (last_cell_coord[1] + 0.5) / 12),
+                            int(inv_region[1] + inv_region[3] * (last_cell_coord[0] + 0.5) / 5),
+                            .2)
+            self.keyDown('ctrl')
+            self.mouse_click()
+            self.keyUp('ctrl')
 
         self.virtual_inventory.empty_cell(*last_cell_coord)
 
@@ -1484,35 +1299,33 @@ class PoeBuyer(Bot):
 
             self.check_freeze()
 
-            self.take_control('put_remainder')
+            with mouse_controller:
 
-            if attempt:
-                time.sleep(.2)
-                self.keyDown('ctrl')
-                time.sleep(.1)
-                self.click(*cell_coords, clicks=2, interval=.015)
-                time.sleep(.1)
-                self.keyUp('ctrl')
+                if attempt:
+                    time.sleep(.2)
+                    self.keyDown('ctrl')
+                    time.sleep(.1)
+                    self.mouse_click(*cell_coords, clicks=2, interval=.015)
+                    time.sleep(.1)
+                    self.keyUp('ctrl')
+                    time.sleep(.15)
+
+                self.mouse_move(*currency_coord, .1)
                 time.sleep(.15)
-
-            self.moveTo(*currency_coord, .1)
-            time.sleep(.15)
-            self.keyDown('Shift')
-            time.sleep(.15)
-            self.click()
-            time.sleep(.15)
-            self.keyUp('Shift')
-            time.sleep(.15)
-            pyautogui.write(f'{qty}')
-            time.sleep(.15)
-            pyautogui.press('Enter')
-            time.sleep(.15)
-            self.moveTo(*cell_coords)
-            time.sleep(.15)
-            self.click()
-            time.sleep(.15)
-
-            self.release_control('put_remainder')
+                self.keyDown('Shift')
+                time.sleep(.15)
+                self.mouse_click()
+                time.sleep(.15)
+                self.keyUp('Shift')
+                time.sleep(.15)
+                pyautogui.write(f'{qty}')
+                time.sleep(.15)
+                pyautogui.press('Enter')
+                time.sleep(.15)
+                self.mouse_move(*cell_coords)
+                time.sleep(.15)
+                self.mouse_click()
+                time.sleep(.15)
 
             counted = self.get_items_qty_in_cell(cell_coords)
 
@@ -1520,7 +1333,7 @@ class PoeBuyer(Bot):
 
         self.virtual_inventory.put_item(item, qty, first_empty_cell)
 
-        self.moveTo(1, 1)
+        self.mouse_move(1, 1)
 
     @staticmethod
     def keyDown(key):
@@ -1541,12 +1354,11 @@ class PoeBuyer(Bot):
         while delta != 0:
             if delta > 0:  # Нужно доложить в инвентарь из стеша
                 for cell_coord in self.virtual_inventory.get_sorted_cells('empty'):
-                    self.take_control('change_whole_part_in_inventory')
-                    self.moveTo(*currency_coord, .2)
-                    self.keyDown('ctrl')
-                    self.click()
-                    self.keyUp('ctrl')
-                    self.take_control('change_whole_part_in_inventory')
+                    with mouse_controller:
+                        self.mouse_move(*currency_coord, .2)
+                        self.keyDown('ctrl')
+                        self.mouse_click()
+                        self.keyUp('ctrl')
 
                     self.virtual_inventory.put_item(item, stack_size, cell_coord)
 
@@ -1578,19 +1390,17 @@ class PoeBuyer(Bot):
 
             self.check_freeze()
 
-            self.take_control('change_whole_part_in_inventory')
+            with mouse_controller:
 
-            self.moveTo(*currency_coord)
+                self.mouse_move(*currency_coord)
 
-            self.keyDown('ctrl')
-            need_more = whole_part_qty - counted
-            for i in range(need_more):  # Нужно доложить в инвентарь из стеша
-                time.sleep(.015)
-                self.click(*currency_coord, s=.035)
+                self.keyDown('ctrl')
+                need_more = whole_part_qty - counted
+                for i in range(need_more):  # Нужно доложить в инвентарь из стеша
+                    time.sleep(.015)
+                    self.mouse_click(*currency_coord, sleep_after=.035)
 
-            self.keyUp('ctrl')
-
-            self.release_control('change_whole_part_in_inventory')
+                self.keyUp('ctrl')
 
             self.close_x_tabs()
 
@@ -1604,9 +1414,12 @@ class PoeBuyer(Bot):
         for cell_pos in cells_with_items_from_screen:
             self.virtual_inventory.put_item(item, stack_size, cell_pos)
 
-        self.take_control('change_whole_part_in_inventory')
-        self.moveTo(1, 1)
-        self.release_control('change_whole_part_in_inventory')
+        with mouse_controller:
+            self.mouse_move(1, 1)
+
+    def close_x_tabs(self):
+        self.click_to('template_x_button', wait_template=False)
+        time.sleep(1)
 
     def get_cells_with_item_amount(self, region, item=None):
         cells_matrix = self.get_cells_matrix_from_screen(region, item)
@@ -1632,9 +1445,8 @@ class PoeBuyer(Bot):
         return qty
 
     def get_items_qty_in_cell(self, cell_coords, item_name=""):
-        self.take_control('get_items_qty_in_cell')
-        item_info = get_item_info(['quantity', 'item_name'], cell_coords)
-        self.release_control('get_items_qty_in_cell')
+        with mouse_controller:
+            item_info = get_item_info(['quantity', 'item_name'], cell_coords)
 
         qty = 0
         item_name_from_clipboard = item_info.get('item_name', "")
@@ -1663,22 +1475,23 @@ class PoeBuyer(Bot):
 
     def accept_party(self):
 
-        template_settings = self.v('template_accept')
+        template_accept = self.v('template_accept')
 
         while True:
             if not self.party_accepted:
                 self.check_freeze()
 
-                xywh = self.find_template(**template_settings, move_to_1_1=False)
+                xywh = self.find_template(template_accept, move_to_1_1=False)
 
                 if xywh:
-                    self.take_control('accept_party')
-                    x, y, w, h = xywh
-                    self.moveTo(*to_global(template_settings['region'], [x + w * .5, y + h * .5]))
-                    self.click()
-                    self.release_control('accept_party')
+                    with mouse_controller:
+                        x, y, w, h = xywh
+                        self.mouse_move_and_click(*to_global(template_accept['region'], [x + w * .5, y + h * .5]))
 
-                    self.party_accepted = True
+                    time.sleep(.5)
+
+                    if not self.find_template(template_accept, move_to_1_1=False):
+                        self.party_accepted = True
 
             time.sleep(.5)
 
@@ -1708,7 +1521,6 @@ class PoeBuyer(Bot):
 
     # region Продажа. Сделка
     def wait_trade(self):
-        trade_template_settings = self.v('template_trade')
         timeout = self.v('trade_timeout')
 
         _start = datetime.now()
@@ -1716,7 +1528,7 @@ class PoeBuyer(Bot):
         while True:
             time.sleep(.5)
 
-            if self.find_template(**trade_template_settings):
+            if self.find_template('template_trade'):
                 break
 
             self.click_to('template_accept', wait_template=False)
@@ -1733,10 +1545,9 @@ class PoeBuyer(Bot):
     def check_items(self):
         qty = 0
         region = self.v('region_trade_inventory_fields_seller')
-        trade_template_settings = self.v('template_trade')
         while qty < self.current_deal.item_qty:
 
-            if not self.find_template(**trade_template_settings):
+            if not self.find_template('template_trade'):
                 raise TimeoutError("Трейд закрылся до завершения")
 
             qty = self.count_sellers_items(region, self.current_deal.item_name)
@@ -1814,51 +1625,22 @@ class PoeBuyer(Bot):
 
     # endregion
 
-    # region Выход из ПОЕ на перерыв
-    def close_poe(self):
-        window_name = "Path of Exile"
-        while True:
-            if self.stop():
-                raise TimeoutError(f"Не смог закрыть окно {window_name}")
-
-            time.sleep(3)
-
-            hwnd = win32gui.FindWindow(None, window_name)
-            if hwnd:
-                win32gui.SetForegroundWindow(hwnd)  # Выводим на передний план окно
-
-                keyboard.send("alt+f4")  # Закрываем его
-            else:
-                return
-
-    # endregion
+    def get_item_image(self, item):
+        return self.db.get_poe_item_image(item)
 
     # region Общие функции
-
-    def clear_logs(self):
-        open(self.v('logs_path'), 'w').close()  # Очистка логов перед трейдом
-
     def go_home(self, forced=False):
         if self.in_own_hideout and not forced:
             return
 
-        template_stash_settings = self.v('template_stash')
         while True:
             self.wait_for_template('template_game_loaded')
             self.send_to_chat("/hideout")
             time.sleep(self.v('waiting_for_teleport'))
 
-            if self.find_template(**template_stash_settings):
+            if self.find_template('template_stash'):
                 self.in_own_hideout = True
                 break
-
-    @staticmethod
-    def send_to_chat(message):
-        pyautogui.press('enter')
-        time.sleep(.15)
-        keyboard.write(message, delay=0)
-        time.sleep(.05)
-        pyautogui.press('enter')
 
     def save_current_deal_result(self, result, state):
         self.db.save_deal_history([
