@@ -29,6 +29,7 @@ from bots.poe.buyer.db_requests import Database
 from bots.poe.buyer.additional_functional import Content, Items, Blacklist
 from common import resource_path
 from controllers import mouse_controller
+from errors import StopStepError
 
 
 class PoeBase(Bot):
@@ -313,7 +314,7 @@ class PoeBase(Bot):
         _window_params = None
         while True:
             if self.stop():
-                raise TimeoutError(f"Не запущено окно с именем {window_name}")
+                raise StopStepError(f"Не запущено окно с именем {window_name}")
 
             time.sleep(2)
 
@@ -379,7 +380,7 @@ class PoeBase(Bot):
                 break
 
             if attempts > max_attempts:
-                raise TimeoutError(f"Не смог выложить предметы из инвентаря с {attempts} попыток")
+                raise StopStepError(f"Не смог выложить предметы из инвентаря с {attempts} попыток")
 
             self.check_freeze()
 
@@ -395,17 +396,17 @@ class PoeBase(Bot):
 
         self.virtual_inventory.set_empty_cells_matrix()
 
-    def open_stash(self):
+    def open_stash(self, move_to_1_1=True):
 
         attempt = 0
         while True:
-            if self.find_template('template_stash_header'):
+            if self.find_template('template_stash_header', move_to_1_1=move_to_1_1):
                 return
 
             self.click_to('template_stash')
 
             if self.stop() or attempt > 3:
-                raise TimeoutError("Не смог открыть стеш")
+                raise StopStepError("Не смог открыть стеш")
             else:
                 time.sleep(.5)
 
@@ -422,18 +423,19 @@ class PoeBase(Bot):
                 self.mouse_click()
                 self.key_up('ctrl')
 
-    def get_non_empty_cells(self, region):
-        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region)
+    def get_non_empty_cells(self, region, need_clear_region=True):
+        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region, need_clear_region=need_clear_region)
         non_empty_cells_coords = sorted(zip(*np.where(cells_matrix_from_screen == 0)), key=itemgetter(1))
         return non_empty_cells_coords
 
-    def get_empty_cells(self, region):
-        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region)
+    def get_empty_cells(self, region, need_clear_region=True):
+        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region, need_clear_region=need_clear_region)
         empty_cells_coords = sorted(zip(*np.where(cells_matrix_from_screen == 1)), key=itemgetter(1))
         return empty_cells_coords
 
-    def get_cells_with_item(self, region, item):
-        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region, item)
+    def get_cells_with_item(self, region, item, need_clear_region=True):
+        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region, item=item,
+                                                                     need_clear_region=need_clear_region)
         cells_with_item = list(zip(*np.where(cells_matrix_from_screen == 1)))
         return cells_with_item
 
@@ -497,8 +499,9 @@ class PoeBase(Bot):
 
         while True:
             img = self.get_screen_region(extended_inventory_region, True)
+            x_tab_offset_x = w - x_tab_h
 
-            x_tabs_img = img[:, w - x_tab_h:w]
+            x_tabs_img = img[:, x_tab_offset_x:w]
             x_tabs_coords = self.match_templates(x_tabs_img, x_tab_template, 'all')
 
             accept_coords = self.match_templates(img, 'template_accept', 'once')
@@ -509,8 +512,12 @@ class PoeBase(Bot):
             for x_tab_coords in x_tabs_coords:
                 self.check_freeze()
 
-                x, y, w, h = x_tab_coords
-                self.mouse_move_and_click(*to_global(extended_inventory_region, [x + w * .5, y + h * .5]))
+                x_tab_x, x_tab_y, x_tab_w, x_tab_h = x_tab_coords
+                self.mouse_move_and_click(
+                    *to_global(
+                        extended_inventory_region, [x_tab_offset_x + x_tab_x + x_tab_w * .5, x_tab_y + x_tab_h * .5]
+                    )
+                )
 
             time.sleep(1)
 
@@ -597,7 +604,7 @@ class PoeBase(Bot):
                 """
         raise NotImplementedError("В общем виде не реализована")
 
-    def put_remainder(self, inv_region, currency_coord, item, qty):
+    def put_remainder(self, inv_region, item, qty):
         # TODO Сделать функцию, чтобы работала с любыми вкладками/итемами
         """
         if qty == 0:
@@ -654,7 +661,7 @@ class PoeBase(Bot):
         """
         raise NotImplementedError("В общем виде не реализована")
 
-    def put_whole_part_in_inventory(self, inv_region, currency_coord, item, stack_size, whole_part_qty):
+    def put_whole_part_in_inventory(self, inv_region, item, stack_size, whole_part_qty):
         # TODO Сделать функцию, чтобы работала с любыми вкладками/итемами
         """
         if whole_part_qty == 0:
@@ -696,7 +703,7 @@ class PoeBase(Bot):
         raise NotImplementedError("В общем виде не реализована")
 
     def count_sellers_items(self, inv_region, item_name):
-        cells_positions = self.get_empty_cells(inv_region)
+        cells_positions = self.get_non_empty_cells(inv_region, need_clear_region=False)
 
         qty = 0
         for row, col in cells_positions:
@@ -734,7 +741,7 @@ class PoeBase(Bot):
         window_name = "Path of Exile"
         while True:
             if self.stop():
-                raise TimeoutError(f"Не смог закрыть окно {window_name}")
+                raise StopStepError(f"Не смог закрыть окно {window_name}")
 
             time.sleep(3)
 

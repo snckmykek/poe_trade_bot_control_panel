@@ -24,6 +24,7 @@ from win32api import GetSystemMetrics
 
 from common import resource_path
 from controllers import mouse_controller
+from errors import StopStepError
 
 dwmapi = ctypes.WinDLL("dwmapi")
 pyautogui.FAILSAFE = False  # Прекращает работу при наведении в левый верхний угол (если надо прекратить ошибочный код)
@@ -185,14 +186,19 @@ class Bot(EventDispatcher):
         try:
             self.check_freeze()
             step['func']()
+
+        except StopStepError as e:
+            result['error'] = str(e)
+            result['error_details'] = traceback.format_exc()
+
+            if step.get('on_error') and step['on_error'].get('goto'):
+                result['goto'] = step['on_error'].get('goto')
+
         except Exception as e:
             result['error'] = str(e)
             result['error_details'] = traceback.format_exc()
             self.update_log(details=result['error_details'], level=1, text=result['error'])
             self.save_log()
-
-            if step.get('on_error') and step['on_error'].get('goto'):
-                result['goto'] = step['on_error'].get('goto')
 
         return result
 
@@ -344,7 +350,7 @@ class Bot(EventDispatcher):
 
     def _key_down(self, key, sleep_after):
         pyautogui.keyDown(key)
-        time.sleep(.015 + sleep_after + self.v('button_delay_ms') / 1000)
+        time.sleep(.025 + sleep_after + self.v('button_delay_ms') / 1000)
 
     def key_up(self, key, sleep_after=.0):
         self.check_freeze()
@@ -394,7 +400,7 @@ class Bot(EventDispatcher):
                 break
 
             if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
-                raise TimeoutError(f"Не найден шаблон '{variable.name}'")
+                raise StopStepError(f"Не найден шаблон '{variable.name}'")
             else:
                 time.sleep(.5)
 
@@ -405,7 +411,7 @@ class Bot(EventDispatcher):
             for _xywh in xywh:
                 x, y, w, h = _xywh
                 self.mouse_move_and_click(
-                    *to_global(region, [x + w * offset_x, y + h * offset_y]), clicks=clicks, sleep_after=.5)
+                    *to_global(region, [x + w * offset_x, y + h * offset_y]), clicks=clicks, sleep_after=.1)
 
     def _click_to_coord(self, variable, variable_value, offset_x, offset_y, clicks):
         with mouse_controller:
@@ -506,7 +512,7 @@ class Bot(EventDispatcher):
                 return True
 
             if self.stop() or (timeout and (datetime.now() - _start).total_seconds() > timeout):
-                raise TimeoutError(f"Не найден шаблон '{self._variables[template_name].name}'")
+                raise StopStepError(f"Не найден шаблон '{self._variables[template_name].name}'")
             else:
                 time.sleep(.5)
 

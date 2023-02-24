@@ -67,6 +67,7 @@ class ControlPanelApp(MDApp):
     stages_box = ObjectProperty()
     status = StringProperty(f"Бот-платформа {v}")
     state = StringProperty('break', options=['break', 'work'])
+    stage_started_manually = True
     tasks_obj = ListProperty([])
     timer = NumericProperty(0)
 
@@ -174,6 +175,8 @@ class ControlPanelApp(MDApp):
         _start = datetime.now()
 
         result = self.bot.execute_step(self.current_task, self.current_stage)
+
+        self.stage_started_manually = False
 
         error_occurred = bool(result.get('error', ""))
 
@@ -378,12 +381,14 @@ class ControlPanelApp(MDApp):
 
     def start(self, goto=(0, 0)):
         self.need_stop_task = False
+        self.stage_started_manually = True
         self.reset_tasks_completed()
         self.set_state('work')
         self.start_stage(goto)
 
     def start_by_task(self, goto):
         self.need_stop_task = False
+        self.stage_started_manually = True
         self.reset_tasks_completed()
         self.set_tasks_completed(goto[0])
         self.set_state('work')
