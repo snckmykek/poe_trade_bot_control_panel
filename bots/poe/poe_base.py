@@ -13,23 +13,28 @@ import cv2
 import keyboard as keyboard
 import pyautogui
 import numpy as np
+import pyperclip
 import requests
 import win32gui
-from kivy.properties import DictProperty, ListProperty, NumericProperty, BooleanProperty, StringProperty
+from kivy.lang import Builder
+from kivy.properties import DictProperty, ListProperty, NumericProperty, BooleanProperty, StringProperty, ObjectProperty
+from kivymd.app import MDApp
+from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDRectangleFlatIconButton
 from kivymd.uix.label import MDLabel
-from kivymd.uix.snackbar import MDSnackbar
 from matplotlib import pyplot as plt
 from win32api import GetSystemMetrics
 from kivy.clock import Clock
 
 from bots.bot import Bot, Coord, Simple, Template, get_window_param, to_global
-from bots.common import CustomDialog, VirtualInventory, get_item_info
+from bots.common import CustomDialog
 from bots.poe.buyer.db_requests import Database
 from bots.poe.buyer.additional_functional import Content, Items, Blacklist
-from common import resource_path
-from controllers import mouse_controller
+from common import resource_path, abs_path_near_exe
+from controllers import mouse_controller, hotkey_controller
 from errors import StopStepError
+
+Builder.load_file(os.path.abspath(os.path.join(os.path.dirname(__file__), "poe_base.kv")))
 
 
 class PoeBase(Bot):
@@ -39,10 +44,14 @@ class PoeBase(Bot):
     key = "poe_base"
 
     # Кастомные
-    virtual_inventory: VirtualInventory = VirtualInventory(5, 12)
+    virtual_inventory = None
+    poe_helper = None
 
     def __init__(self):
         super(PoeBase, self).__init__()
+        self.virtual_inventory = VirtualInventory(5, 12)
+
+        self.poe_helper = Helper()
 
         self.variables_setting = {
             'Данные для входа': [
@@ -216,8 +225,8 @@ class PoeBase(Bot):
                     window='poe_except_inventory'
                 ),
                 Coord(
-                    key='region_trade_inventory_fields_seller',
-                    name="Поле ячеек трейда (продавца)",
+                    key='region_trade_inventory_fields_his',
+                    name="Поле ячеек трейда (того, с кем трейд)",
                     relative=True,
                     snap_mode='ct',
                     type='region',
@@ -301,6 +310,39 @@ class PoeBase(Bot):
             ]
         }
 
+        self.task_tab_buttons.extend(
+            [
+                {
+                    'text': "POE: Helper",
+                    'icon': 'alert-box-outline',
+                    'func': self.open_poe_helper
+                },
+            ]
+        )
+
+    def open_poe_helper(self, *_):
+        content = self.poe_helper
+
+        dialog = CustomDialog(
+            auto_dismiss=False,
+            title=content.title,
+            type="custom",
+            content_cls=content,
+            buttons=[
+                MDRectangleFlatIconButton(
+                    icon=dialog_button['icon'],
+                    text=dialog_button['text'],
+                    theme_text_color="Custom",
+                    text_color=self.app.theme_cls.primary_color,
+                    on_release=dialog_button['on_release']
+                ) for dialog_button in content.buttons
+            ],
+        )
+
+        dialog.content_cls.dialog_parent = dialog
+        dialog.bind(on_pre_open=content.on_pre_open)
+        dialog.open()
+
     def stub(self, *_):
         print(f"Заглушка: {self.app.current_task}, {self.app.current_stage}")
         time.sleep(1)
@@ -358,7 +400,7 @@ class PoeBase(Bot):
 
     # region Работа с инвентарем
 
-    def clear_inventory(self):
+    def clear_inventory(self, once=False):
         region = self.v('region_inventory_fields')
 
         rows = 12
@@ -388,9 +430,17 @@ class PoeBase(Bot):
                 self.key_down('ctrl')
                 for row, col in non_empty_cells:
                     cell_coord = [x_reg + (col + .5) * w_cell, y_reg + (row + .5) * h_cell]
-                    self.mouse_click(cell_coord, clicks=2, interval=.015)
+                    if once:
+                        # pyautogui.moveTo(*cell_coord)
+                        pyautogui.click(*cell_coord, clicks=2)
+                        time.sleep(.013)
+                    else:
+                        self.mouse_click(cell_coord, clicks=2, interval=.015)
                     time.sleep(.015 * attempts)
                 self.key_up('ctrl')
+
+            if once:
+                break
 
             attempts += 1
 
@@ -544,7 +594,7 @@ class PoeBase(Bot):
             template = np.asarray(bytearray(template_b), dtype="uint8")
             template = cv2.imdecode(template, cv2.IMREAD_UNCHANGED)
         else:
-            template = (plt.imread(resource_path(f"images/templates/{path}")) * 255).astype(np.uint8)
+            template = (plt.imread(abs_path_near_exe(f"images/templates/{path}")) * 255).astype(np.uint8)
 
         template = cv2.resize(template, size)
 
@@ -567,48 +617,46 @@ class PoeBase(Bot):
 
         return mask
 
-    def from_stash_to_inventory(self, amount, currency):
-        # TODO Сделать функцию, чтобы работала с любыми вкладками/итемами
-        """
-                if not amount:
-                    return
+    def from_stash_to_inventory(self, amount, item, stack_size, stack):
+        if not amount:
+            return
 
-                if currency == 'divine':
-                    currency_coord = self.v('coord_divine')
-                    stack = self.swag['divine']
-                elif currency == 'chaos':
-                    currency_coord = self.v('coord_chaos')
-                    stack = self.swag['chaos']
-                else:
-                    raise ValueError(f"Неверно указана валюта: '{currency}'")
+        inv_region = self.v('region_inventory_fields')
 
-                item_name_from_clipboard = get_item_info(['item_name', ], currency_coord).get('item_name', "")
-                while currency not in item_name_from_clipboard.lower():
-                    self.try_to_open_currency_tab()
-                    item_name_from_clipboard = get_item_info(['item_name', ], currency_coord).get('item_name', "")
+        if stack < amount:
+            raise StopStepError(f"Недостаточно '{item}': всего {stack}, требуется {amount}")
 
-                    if self.stop():
-                        raise TimeoutError("Не смог открыть валютную вкладку")
+        whole_part = math.floor(amount // stack_size)
+        remainder_part = amount % stack_size
 
-                if stack < amount:
-                    raise ValueError(f"Недостаточно валюты '{currency}': всего {stack}, требуется {amount}")
+        self.put_whole_part_in_inventory(inv_region, item, stack_size, whole_part)
+        self.put_remainder(inv_region, item, remainder_part)
+        
+    def from_inventory_to_trade(self):
+        inv_region = self.v('region_inventory_fields')
+        trade_my_region = self.v('region_trade_inventory_fields_my')
 
-                stack_size = 10
-                inv_region = self.v('region_inventory_fields')
+        cells_for_empty = self.virtual_inventory.get_sorted_cells('empty', exclude=True)
 
-                whole_part = math.floor(amount // stack_size)
-                remainder_part = amount % stack_size
+        while True:
+            if not self.find_template('template_trade'):
+                raise StopStepError("Трейд закрылся до завершения")
 
-                self.put_whole_part_in_inventory(inv_region, currency_coord, currency, stack_size, whole_part)
-                self.put_remainder(inv_region, currency_coord, currency, remainder_part)
-                """
-        raise NotImplementedError("В общем виде не реализована")
+            self.items_from_cells(inv_region, cells_for_empty)
+            time.sleep(1)
+
+            trade_non_empty_cells = self.get_non_empty_cells(trade_my_region, need_clear_region=False)
+            if len(cells_for_empty) == len(trade_non_empty_cells):
+                return
+
+            if self.stop():
+                raise StopStepError("Не смог выложить из инвентаря в трейд")
 
     def put_remainder(self, inv_region, item, qty):
-        # TODO Сделать функцию, чтобы работала с любыми вкладками/итемами
-        """
         if qty == 0:
             return
+
+        item_coord, item_qty_left_in_cell = self.get_item_coord_and_qty(item)
 
         first_empty_cell = self.virtual_inventory.get_first_cell()
         cell_coords = [int(inv_region[0] + inv_region[2] * (first_empty_cell[1] + 0.5) / 12),
@@ -619,37 +667,38 @@ class PoeBase(Bot):
         while qty != counted:
 
             if self.stop() or attempt >= 5:
-                raise TimeoutError("Не смог выложить нецелую часть валюты")
+                raise StopStepError("Не смог выложить нецелую часть валюты")
 
             self.check_freeze()
 
-            with mouse_controller('put_remainder'):
+            with mouse_controller:
 
                 if attempt:
                     time.sleep(.2)
-                    self.key_down('ctrl')
-                    time.sleep(.1)
-                    self.mouse_click(*cell_coords, clicks=2, interval=.015)
-                    time.sleep(.1)
-                    self.key_up('ctrl')
-                    time.sleep(.15)
+                    self.key_down('ctrl', sleep_after=.1)
+                    self.mouse_click(*cell_coords, clicks=2, interval=.015, sleep_after=.1)
+                    self.key_up('ctrl', sleep_after=.15)
 
-                self.mouse_move(*currency_coord, .1)
-                time.sleep(.15)
-                self.key_down('Shift')
-                time.sleep(.15)
-                self.mouse_click()
-                time.sleep(.15)
-                self.key_up('Shift')
-                time.sleep(.15)
-                pyautogui.write(f'{qty}')
-                time.sleep(.15)
-                pyautogui.press('Enter')
-                time.sleep(.15)
-                self.mouse_move(*cell_coords)
-                time.sleep(.15)
-                self.mouse_click()
-                time.sleep(.15)
+                if qty > item_qty_left_in_cell:
+                    raise StopStepError(f"Недостаточно {item} в ячейке")
+
+                elif qty == item_qty_left_in_cell:
+                    self.mouse_move(*item_coord, duration=.1, sleep_after=.15)
+                    self.key_down('Ctrl', sleep_after=.15)
+                    self.mouse_click(sleep_after=.15)
+                    self.key_up('Ctrl', sleep_after=.15)
+
+                else:
+                    self.mouse_move(*item_coord, duration=.1, sleep_after=.15)
+                    self.key_down('Shift', sleep_after=.15)
+                    self.mouse_click(sleep_after=.15)
+                    self.key_up('Shift', sleep_after=.15)
+                    pyautogui.write(f'{qty}')
+                    time.sleep(.15)
+                    pyautogui.press('Enter')
+                    time.sleep(.15)
+                    self.mouse_move(*cell_coords, sleep_after=.15)
+                    self.mouse_click(sleep_after=.15)
 
             counted = self.get_items_qty_in_cell(cell_coords)
 
@@ -657,15 +706,20 @@ class PoeBase(Bot):
 
         self.virtual_inventory.put_item(item, qty, first_empty_cell)
 
-        self.mouse_move(1, 1)
-        """
-        raise NotImplementedError("В общем виде не реализована")
+        with mouse_controller:
+            self.mouse_move(1, 1)
+
+    def get_item_coord_and_qty(self, item):
+        raise NotImplementedError("Для каждого бота ПОЕ функция должна быть реализована отдельно")
 
     def put_whole_part_in_inventory(self, inv_region, item, stack_size, whole_part_qty):
-        # TODO Сделать функцию, чтобы работала с любыми вкладками/итемами
-        """
         if whole_part_qty == 0:
             return
+
+        item_coord, item_qty_left_in_cell = self.get_item_coord_and_qty(item)
+
+        if item_qty_left_in_cell < whole_part_qty * stack_size:
+            raise StopStepError(f"Недостаточно {item} в ячейке")
 
         cells_with_items_from_screen = []
 
@@ -673,22 +727,20 @@ class PoeBase(Bot):
         counted = 0
         while counted != whole_part_qty:
             if self.stop() or attempt >= 5:
-                raise TimeoutError(f"Не смог взять валюту из стеша с {attempt} попыток")
+                raise StopStepError(f"Не смог взять валюту из стеша с {attempt} попыток")
 
             self.check_freeze()
 
-            with mouse_controller('change_whole_part_in_inventory'):
-                self.mouse_move(*currency_coord)
+            need_more = whole_part_qty - counted
 
-                self.key_down('ctrl')
-                need_more = whole_part_qty - counted
-                for i in range(need_more):  # Нужно доложить в инвентарь из стеша
-                    time.sleep(.015)
-                    self.mouse_click(*currency_coord, sleep_after=.035)
+            with mouse_controller:
+                self.mouse_move(*item_coord)
 
-                self.key_up('ctrl')
+                self.key_down('ctrl', sleep_after=.15)
+                self.mouse_click(*item_coord, clicks=need_more, interval=.035, sleep_after=.035)
+                self.key_up('ctrl', sleep_after=.15)
 
-            cells_with_items_from_screen = self.get_cells_with_item(inv_region, item)
+            cells_with_items_from_screen = self.get_cells_with_item(inv_region, item=item, need_clear_region=True)
             counted = len(cells_with_items_from_screen)
 
             attempt += 1
@@ -697,12 +749,10 @@ class PoeBase(Bot):
         for cell_pos in cells_with_items_from_screen:
             self.virtual_inventory.put_item(item, stack_size, cell_pos)
 
-        with mouse_controller('change_whole_part_in_inventory'):
+        with mouse_controller:
             self.mouse_move(1, 1)
-        """
-        raise NotImplementedError("В общем виде не реализована")
 
-    def count_sellers_items(self, inv_region, item_name):
+    def count_items(self, inv_region, item_name):
         cells_positions = self.get_non_empty_cells(inv_region, need_clear_region=False)
 
         qty = 0
@@ -712,7 +762,7 @@ class PoeBase(Bot):
 
         # TODO Вынести в отдельную логику ситуации, когда товар большой на несколько яч ячейках (сейчас каждую считает)
         if item_name == 'Prime Chaotic Resonator':
-            qty = round(qty/4)
+            qty = round(qty / 4)
 
         self.print_log(f"Подсчитано {item_name}: {qty}")
 
@@ -736,6 +786,8 @@ class PoeBase(Bot):
                 int(inv_region[1] + inv_region[3] * (row + 0.5) / 5)]
 
     # endregion
+
+    # region Прочее
 
     def close_poe(self):
         window_name = "Path of Exile"
@@ -763,3 +815,255 @@ class PoeBase(Bot):
         keyboard.write(message, delay=0)
         time.sleep(.05)
         pyautogui.press('enter')
+
+    # endregion
+
+
+class Helper(MDBoxLayout):
+    title = "Настройки POE: Helper"
+    dialog_parent = ObjectProperty()
+    buttons = []
+
+    def __init__(self, **kwargs):
+        super(Helper, self).__init__(**kwargs)
+
+        self.buttons = [
+            {
+                'text': "Отменить",
+                'icon': 'window-close',
+                'on_release': self.cancel
+            },
+            {
+                'text': "Сохранить",
+                'icon': 'check',
+                'on_release': self.save
+            },
+        ]
+
+        self.add_hotkeys()
+
+    def set_hotkeys(self):
+        pass
+
+    def on_pre_open(self, *args):
+        pass
+
+    def cancel(self, *args):
+        self.dialog_parent.dismiss()
+
+    def save(self, *args):
+        # TODO save_hotkeys
+        self.add_hotkeys()
+
+        self.dialog_parent.dismiss()
+
+    def add_hotkeys(self):
+        def clear_inv(*_):
+            try:
+                MDApp.get_running_app().bot.clear_inventory(once=True)
+            except Exception as e:
+                MDApp.get_running_app().set_status(f"{str(type(e))} {str(e)}")
+
+        hotkey_controller.add_hotkey('f10', clear_inv)
+
+
+# region Виртуальный инвентарь
+
+@dataclass
+class VirtualInventory:
+    """
+    """
+
+    rows = 0
+    cols = 0
+    cells_matrix = np.empty([0, 0])
+
+    def __init__(self, rows, cols):
+        self.rows = rows
+        self.cols = cols
+        self.set_empty_cells_matrix()
+
+    def set_empty_cells_matrix(self):
+        self.cells_matrix = np.empty([self.rows, self.cols], dtype=Cell)
+
+        rows, cols = self.cells_matrix.shape
+
+        for row in range(rows):
+            for col in range(cols):
+                self.cells_matrix[row][col] = Cell(row, col)
+
+    def get_first_cell(self, item='empty') -> tuple:
+        sorted_cells = self.get_sorted_cells(item)
+
+        if not sorted_cells:
+            raise ValueError(f"Не удалось получить первую ячейку. В инвентаре нет ни одной ячейки с '{item}'")
+
+        return sorted_cells[0]
+
+    def get_last_cell(self, item='empty') -> tuple:
+        sorted_cells = self.get_sorted_cells(item)
+
+        if not sorted_cells:
+            raise ValueError(f"Не удалось получить последнюю ячейку. В инвентаре нет ни одной ячейки с '{item}'")
+
+        return sorted_cells[-1]
+
+    def get_sorted_cells(self, item, exclude=False):
+
+        cells_with_item = self.get_cells(item, exclude)
+
+        return sorted(cells_with_item, key=itemgetter(1))
+
+    def get_cells(self, item, exclude):
+
+        get_item = np.vectorize(Cell.get_content)
+
+        if exclude:
+            cells = list(
+                        zip(
+                            *np.where(get_item(self.cells_matrix) != item)
+                        )
+                    )
+        else:
+            cells = list(
+                        zip(
+                            *np.where(get_item(self.cells_matrix) == item)
+                        )
+                    )
+
+        return cells
+
+    def put_item(self, item, qty=1, cell_coord=None):
+        if cell_coord:
+            row, col = cell_coord
+        else:
+            row, col = self.get_first_cell()
+
+        cell = self.cells_matrix[row][col]
+        cell.put(item, qty)
+
+    def empty_cell(self, row, col):
+        cell = self.cells_matrix[row][col]
+        cell.empty()
+
+    def get_qty(self, cell_coord):
+        row, col = cell_coord
+        cell = self.cells_matrix[row][col]
+        return cell.get_qty()
+
+
+@dataclass
+class Cell:
+    _empty = 'empty'
+    _row: int
+    _col: int
+
+    content: str = _empty
+    qty: int = 0
+
+    def __init__(self, row, col):
+        self._row = row
+        self._col = col
+
+    def get_content(self):
+        return self.content
+
+    def get_qty(self):
+        return self.qty
+
+    def put(self, content, qty):
+        if self.content != self._empty:
+            raise ValueError(f"Не удалось положить предмет '{content}' в виртуальный инвентарь: "
+                             f"ячейка ({self._row}, {self._col}) не пуста.")
+
+        self.content = content
+        self.qty = qty
+
+    def empty(self):
+        if self.content == self._empty:
+            raise ValueError(f"Не удалось изъять предмет из виртуального инвентаря: "
+                             f"ячейка ({self._row}, {self._col}) пуста.")
+
+        self.content = self._empty
+        self.qty = 0
+
+
+class ItemTransporter:
+    pass
+
+
+def get_item_info(keys: list, cell_coord: list) -> dict:
+    pyautogui.moveTo(cell_coord)
+    time.sleep(.035)
+
+    item_info = {}
+
+    item_info_text = get_item_info_text_from_clipboard()
+    if not item_info_text:
+        return item_info
+
+    item_info_parts = [[line for line in part.split('\r\n') if line] for part in item_info_text.split('--------')]
+
+    for key in keys:
+        value = find_item_info_by_key(item_info_parts, key)
+        item_info.update({key: value})
+
+    return item_info
+
+
+def get_item_info_text_from_clipboard():
+    pyperclip.copy("")
+    time.sleep(.015)
+    keyboard.send(['ctrl', 46])  # ctrl+c (англ.)
+    time.sleep(.035)
+    item_info_text = pyperclip.paste()
+
+    return item_info_text
+
+
+def find_item_info_by_key(item_info_parts, key):
+
+    def get_value_after_startswith(startswith, default_value):
+        line = find_line_startswith(item_info_parts, startswith)
+        if line:
+            return line.split(startswith)[1]
+        else:
+            return default_value
+
+    if key == 'item_class':
+        value = get_value_after_startswith("Item Class: ", "")
+
+    elif key == 'rarity':
+        value = get_value_after_startswith("Rarity: ", "")
+
+    elif key == 'quantity':
+        str_value = get_value_after_startswith("Stack Size: ", "1/1").split('/')[0]
+        value = int(str_value.replace("\xa0", ""))  # мб неразрывный пробел \xa0 (1 234 567)
+
+    elif key == 'ilvl':
+        value = get_value_after_startswith("Item Level: ", "")
+    elif key == 'item_name':
+        rarity = find_item_info_by_key(item_info_parts, 'rarity')
+
+        # Для уников название в 1 части ровно в 3 строке из 4,
+        #  а для других - в последней (3 или 4, в зависимости от рарности)
+        if rarity == "Unique":
+            value = item_info_parts[0][2]
+        else:
+            value = item_info_parts[0][-1]
+
+    else:
+        raise KeyError(f"Для ключа '{key}' не указан алгоритм получения информации по предмету")
+
+    return value
+
+
+def find_line_startswith(item_info_parts, startswith):
+    for item_info_lines in item_info_parts:
+        for line in item_info_lines:
+            if line.startswith(startswith):
+                return line
+
+    return ""
+
+# endregion

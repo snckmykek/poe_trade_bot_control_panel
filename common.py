@@ -11,3 +11,7 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
 
     return os.path.join(base_path, relative_path)
+
+
+def abs_path_near_exe(relative_path):
+    return os.path.join(os.getcwd(), relative_path)

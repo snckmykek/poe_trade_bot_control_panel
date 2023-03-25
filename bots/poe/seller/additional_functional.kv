@@ -1,77 +1,34 @@
 #: import os os
 #: import CustomMDTextField bots.common.CustomMDTextField
+#: import CustomMDCard bots.common.CustomMDCard
 
 
-<Content>
+<SellerContent>
     orientation: 'vertical'
     spacing: '15dp'
-    Statistic:
-    Deals:
+    SellerStatistic:
+    SellerDeals:
 
 
-<Statistic@CustomMDCard>
-    elevation: 10
+<SellerStatistic@CustomMDCard>
+    elevation: 4
+    shadow_color: [0, 0, 0, .5]
+    shadow_radius: 2
+    shadow_softness: 10
+    shadow_offset: 0, 6
     height: '100dp'
     padding: ['10dp', '10dp']
     radius: [0,0,0,0]
     size_hint_y: None
     spacing: '10dp'
-#    MDWidget:
-#        size_hint_x: None
-#        width: '2dp'
-#        canvas:
-#            Color:
-#                rgba: app.theme_cls.primary_color
-#            Line:
-#                width: 1
-#                points: [self.x, self.y, self.x, self.y + self.height]
-    BoxLayout:
-        orientation: 'vertical'
-        size_hint_x: None
-        width: '120dp'
-        padding: ['12dp', 0, 0, 0]
-        canvas:
-            Color:
-                rgba: app.theme_cls.primary_color
-            Line:
-                width: 1
-                points: [self.x, self.y, self.x, self.y + self.height]
-        BoxLayout:
-            AsyncImage:
-                source: "https://web.poecdn.com{}".format(app.bot.db.get_poe_item_image('chaos'))
-                color: [1, 1, 1, 1]
-                size_hint: None, None
-                pos_hint: {'center_y': .5}
-                size: dp(36), dp(36)
-            MDLabel:
-                text: " x {}".format(app.bot.swag['chaos'])
-        BoxLayout:
-            AsyncImage:
-                source: "https://web.poecdn.com{}".format(app.bot.db.get_poe_item_image('divine'))
-                color: [1, 1, 1, 1]
-                size_hint: None, None
-                pos_hint: {'center_y': .5}
-                size: dp(36), dp(36)
-            MDLabel:
-                text: " x {}".format(app.bot.swag['divine'])
-    BoxLayout:
-        orientation: 'vertical'
-        padding: ['12dp', 0, 0, 0]
-        canvas:
-            Color:
-                rgba: app.theme_cls.primary_color
-            Line:
-                width: 1
-                points: [self.x, self.y, self.x, self.y + self.height]
-        MDLabel:
-            text: "Сделки: {} / {} / {}".format(app.bot.stat['good'], app.bot.stat['skipped'], app.bot.stat['bad'])
-        MDLabel:
-            text:
-                "Общий профит: {} div".format(round(app.bot.stat['profit']/app.bot.divine_price, 1) \
-                if app.bot.divine_price else 0)
+
+    MDLabel:
+        text:
+            "D: {},  C: {}".format(app.bot.divine_price,
+            "1/{}".format(int(1/app.bot.chaos_price)) if app.bot.chaos_price else 0)
 
 
-<Deals@MDBoxLayout>
+<SellerDeals@MDBoxLayout>
     orientation: 'vertical'
     spacing: '5dp'
     padding: ['10dp', '10dp']
@@ -79,7 +36,11 @@
         orientation: 'vertical'
         id: card
         _indent: dp(12)
-        elevation: 10
+        elevation: 4
+        shadow_color: [0, 0, 0, .5]
+        shadow_radius: 2
+        shadow_softness: 10
+        shadow_offset: 0, 6
         size_hint_y: None
         radius: [0,0,0,0]
         height: current_deal.height + self._indent * 2
@@ -132,29 +93,27 @@
             id: current_deal
             divider_color: [0, 0, 0, 0]
             text:
-                "Ник: {}".format(app.bot.current_deal['character_name'])
+                "Ник: {}".format(app.bot.current_deal_dict['character_name'])
             secondary_text:
-                "Всего: {}, цена за шт: {}/{} {}".format(\
-                app.bot.current_deal['available_item_stock'], \
-                app.bot.current_deal['exchange_amount'], \
-                app.bot.current_deal['item_amount'], \
-                app.bot.current_deal['exchange_currency'])
+                "Кол-во: {}".format(app.bot.current_deal_dict['item_qty'])
             tertiary_text:
-                "Профит: {}".format(app.bot.current_deal['profit'])
+                "Сумма: {}d {}c".format(\
+                app.bot.current_deal_dict['divine_qty'], app.bot.current_deal_dict['chaos_qty'])
             AsyncImageLeftWidget:
                 source:
-                    "https://web.poecdn.com{}".format(app.bot.current_deal['image']) if app.bot.current_deal['image'] \
-                    else ""
+                    "https://web.poecdn.com{}".format(app.bot.current_deal_dict['image']) \
+                    if app.bot.current_deal_dict['image'] else ""
                 color:
-                    [1, 1, 1, 1 if app.bot.current_deal['image'] else 0]
+                    [1, 1, 1, 1 if app.bot.current_deal_dict['image'] else 0]
                 pos_hint: {'center_x': .5, 'center_y': .5}
 
         Widget:
+
     RecycleView:
         id: deals
         data: app.bot.deals
         scroll_type: ['bars', 'content']
-        viewclass: 'DealOneLineIconListItem'
+        viewclass: 'SellerDealListItem'
         RecycleBoxLayout:
             padding: ['30dp', 0]
             id: stages_parent
@@ -166,181 +125,18 @@
             spacing: '8dp'
 
 
-<DealOneLineIconListItem>:
+<SellerDealListItem>:
+    markup: True
     text:
-        "x{}({}) Цена: {}/{} {}, профит: {}".format(self.item_stock, self.available_item_stock,
-        self.exchange_amount, self.item_amount, self.exchange_currency, self.profit)
+        ("[b]x{} за {} {} ({})[/b]" if self.character_name in app.bot.characters_in_area else "x{} за {} {} ({})" \
+        ).format(self.item_qty, self.divine_qty if self.currency.startswith("D") else self.chaos_qty, \
+        self.currency, self.character_name)
     AsyncImageLeftWidget:
         color:
             [1, 1, 1, 1 if root.image else 0]
         pos_hint: {'center_y': .5}
-        source:
-            "https://web.poecdn.com{}".format(root.image) if root.image else ""
-        size: dp(26), dp(26)
-
-
-<CustomMDCard@MDCard+RectangularElevationBehavior>:
-    _indent: dp(3)
-
-
-
-<Items>
-    orientation: 'vertical'
-    size_hint: None, None
-    height: Window.height * .7
-    width: Window.width * .7
-    spacing: '5dp'
-    MDBoxLayout:
-        height: "63dp"
-        padding: [0, 0, '16dp', 0]
-        size_hint_y: None
-        spacing: '5dp'
-        MDCheckbox:
-            size_hint_x: .05
-            on_active: root.set_use_all_items(self.active)
-        MDLabel:
-            padding: '4dp', 0
-            size_hint_x: .5
-            text: "Предмет"
-        MDIcon:
-            font_size: '36dp'
-            size_hint_x: None
-            width: self.height
-            text_color: 0, 0, 0, 0
-            theme_text_color: 'Custom'
-        MDLabel:
-            size_hint_x: .2
-            text: "Макс цена"
-        MDLabel:
-            size_hint_x: .2
-            text: "Балк цена"
-        MDLabel:
-            size_hint_x: .15
-            text: "Количество"
-        MDIconButton:
-            icon: ''
-    MDScrollView:
-        scroll_type: ['bars', 'content']
-        MDBoxLayout:
-            id: items_box
-            padding: [0, '5dp']
-            size_hint_y: None
-            height: self.minimum_height
-            orientation: 'vertical'
-
-
-<ItemRow>
-    height: "63dp"
-    padding: [0, 0, '16dp', 0]
-    size_hint_y: None
-    spacing: '5dp'
-    MDCheckbox:
-        size_hint_x: .05
-        id: use
-        active: root.use
-    AsyncImageButton:
         source: "https://web.poecdn.com{}".format(root.image) if root.image else ""
-        color: [1, 1, 1, 1 if root.image else 0]
-        size_hint: None, None
-        pos_hint: {'center_y': .5}
-        size: dp(36), dp(36)
-        on_release: root.make_template()
-    MDLabel:
-        id: name
-        size_hint_x: .5
-        text: root.name
-        theme_text_color: "Custom"
-        text_color: app.theme_cls.disabled_hint_text_color
-        canvas.before:
-            Color:
-                rgba: app.theme_cls.disabled_hint_text_color
-            Line:
-                points: self.x, self.y + dp(16), self.x + self.width, self.y + dp(16)
-                width: 1
-                dash_length: dp(3)
-    CustomMDTextField:
-        id: max_price
-        hint_text: str(root.max_price)
-        size_hint_x: .2
-        text_type: 'float'
-    CustomMDTextField:
-        id: bulk_price
-        hint_text: str(root.bulk_price)
-        size_hint_x: .2
-        text_type: 'float'
-    CustomMDTextField:
-        id: qty
-        hint_text: str(root.qty)
-        size_hint_x: .15
-        text_type: 'int'
-    MDIconButton:
-        icon: 'trash-can'
-        on_release: root.icon_func(root)
-        pos_hint: {'center_x': .5, 'center_y': .5}
-        theme_text_color: "Custom"
-        text_color: app.theme_cls.disabled_hint_text_color
-
-
-<ItemSelector>:
-    size_hint: None, None
-    height: Window.height * .7
-    width: Window.width * .7
-    spacing: '8dp'
-    MDCard:
-        padding: ['8dp', '8dp']
-        size_hint_x: None
-        width: '240dp'
-        RecycleView:
-            data: root.categories
-            scroll_type: ['bars', 'content']
-            viewclass: 'ToggleRectangleFlatButton'
-            RecycleBoxLayout:
-                id: stages_parent
-                default_size: None, '24dp'
-                default_size_hint: 1, None
-                height: self.minimum_height
-                orientation: 'vertical'
-                size_hint_y: None
-                spacing: '8dp'
-    MDBoxLayout:
-        orientation: 'vertical'
-        MDTextField:
-            id: search
-            hint_text: "Поиск"
-            helper_text: str(round(root._timer, 2)) if root._timer else ""
-            helper_text_mode: "persistent"
-            on_text: root.start_anim()
-        ScrollView:
-            StackLayout:
-                id: items
-                orientation: 'lr-tb'
-                size_hint_y: None
-                spacing: '5dp'
-                height: self.minimum_height
-                cols: 8
-
-
-<ItemIconPOE>:
-    size_hint: None, None
-    size: '60dp', '60dp'
-    source: "https://web.poecdn.com{}".format(self.image_path)
-    canvas.after:
-        Color:
-            rgba:
-                app.theme_cls.primary_color if self.state == 'down' else [0] * 4
-        Line:
-            width: 1
-            rectangle:
-                (self.x, self.y, self.width, self.height)
-    on_release: self.func(self)
-
-
-<ToggleRectangleFlatButton>:
-    line_color: app.theme_cls.primary_color if self.state == 'down' else [0] * 4
-    on_release: self.func(self)
-
-
-<AsyncImageButton@ButtonBehavior+AsyncImage>:
+        size: dp(26), dp(26)
 
 
 <AsyncImageLeftWidget@ILeftBodyTouch+AsyncImage>:

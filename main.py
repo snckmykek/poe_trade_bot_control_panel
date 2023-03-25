@@ -1,4 +1,6 @@
 # Настройки окна, должны быть до импорта графических объектов
+import traceback
+
 from kivy.config import Config
 
 Config.set('graphics', 'resizable', '1')
@@ -8,7 +10,6 @@ Config.set('graphics', 'height', '900')
 # Общие
 import os
 import time
-import keyboard
 from datetime import datetime
 import configparser
 import random
@@ -36,7 +37,7 @@ from kivymd.uix.tab import MDTabsBase
 # Из проекта
 from allignedtextinput import AlignedTextInput
 from bots import bots_list
-from common import resource_path
+from common import resource_path, abs_path_near_exe
 from task_tab import TaskBox, Stages
 from db_requests import Database
 from setting_tab import AppSettingTab, BotSettingTab  # для pyinstaller импорт тут, а не в controllpanel.kv
@@ -213,7 +214,7 @@ class ControlPanelApp(MDApp):
     def init_config(self):
         try:
             config = configparser.ConfigParser(inline_comment_prefixes="#")
-            if not config.read(resource_path('config.ini')):
+            if not config.read(abs_path_near_exe('config.ini')):
                 raise FileNotFoundError
 
             self.db_path = config['common']['db_path']
@@ -273,7 +274,11 @@ class ControlPanelApp(MDApp):
         self.tasks_obj[self.current_task].stop()
 
         self.set_status(f"Ошибка: {result['error']}", True, True)
-        self.error_details = result['error_details']
+        if not self.error_details or self.error_details == "Нет деталей ошибки":
+            self.error_details = result['error_details']
+        else:
+            pass
+            # self.error_details += "\n" + result['error_details']
 
         if self.need_break:
             self.request_break()
@@ -625,4 +630,3 @@ class Tab(MDBoxLayout, MDTabsBase):
 
 if __name__ == "__main__":
     ControlPanelApp().run()
-    app = MDApp.get_running_app()

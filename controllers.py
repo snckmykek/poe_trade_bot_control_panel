@@ -14,6 +14,9 @@ class HotkeyController:
     def __init__(self):
         keyboard.hook(self.on_key_state)
 
+    def get_pressed_keys(self):
+        return self._pressed_keys
+
     def on_key_state(self, key):
         if PRINT_KEY_INFO:
             print(key.__dict__)

@@ -22,9 +22,9 @@ import time
 import win32gui
 from win32api import GetSystemMetrics
 
-from common import resource_path
+from common import resource_path, abs_path_near_exe
 from controllers import mouse_controller
-from errors import StopStepError
+from errors import StopStepError, BotDevelopmentError, SettingsNotCompletedError
 
 dwmapi = ctypes.WinDLL("dwmapi")
 pyautogui.FAILSAFE = False  # Прекращает работу при наведении в левый верхний угол (если надо прекратить ошибочный код)
@@ -107,7 +107,7 @@ class Bot(EventDispatcher):
     Любой Kivy объект, который можно разместить в BoxLayout.
     Размещаются на вкладке 'задачи' в правой верхней части.
     """
-    task_tab_content: Widget = None
+    task_tab_content: Widget = Widget()
 
     """
     Переменные. Шаблоны и другие данные, настраиваются пользователем.
@@ -153,11 +153,13 @@ class Bot(EventDispatcher):
     Применяются для привязки координат и поиска по шаблонам.
     """
     windows: dict = {
-        'main_screen': {'name': ""}
+        'main': {'name': ""}
     }
 
     def __init__(self):
         super(Bot, self).__init__()
+
+        self.task_tab_buttons = []
 
         self.app = MDApp.get_running_app()
 
@@ -245,15 +247,23 @@ class Bot(EventDispatcher):
         """Возвращает значение переменной по ее имени. В случае ее отсутствия в БД вызывает ошибку"""
 
         if self.need_update_cached_variables_values:
+            errors = []
             for var in self._variables.values():
-                var.update_cached_value()
+                try:
+                    var.update_cached_value()
+                except SettingsNotCompletedError as e:
+                    errors.append(str(e))
+
+            if errors:
+                self.app.error_details = '\n'.join(errors)
+                raise SettingsNotCompletedError("Не все настройки заполнены (клик, чтобы посмотреть)")
 
             self.set_need_update_cached_variables_values(False)
 
         variable = self._variables.get(variable_name)
 
         if not variable:
-            raise NameError(f"Переменной с именем '{variable_name}' нет в списке переменных бота")
+            raise BotDevelopmentError(f"Переменной с именем '{variable_name}' нет в списке переменных бота")
 
         return variable.get_cached_value()
 
@@ -536,7 +546,7 @@ class Bot(EventDispatcher):
             template = np.asarray(bytearray(template_b), dtype="uint8")
             template = cv2.imdecode(template, cv2.IMREAD_UNCHANGED)
         else:
-            template = (plt.imread(resource_path(f"images/templates/{path}")) * 255).astype(np.uint8)
+            template = (plt.imread(abs_path_near_exe(f"images/templates/{path}")) * 255).astype(np.uint8)
 
         template = cv2.resize(template, size)
 
@@ -608,6 +618,10 @@ def get_window_param(window_key, p: Literal["xywh", "xy", "wh", "h", "xywh_hwnd"
     """
 
     window_settings = MDApp.get_running_app().bot.windows.get(window_key)
+
+    if window_settings is None:
+        raise BotDevelopmentError(f"Для бота не задано окно с ключом: '{window_key}'. "
+                                  f"см. bots.bot.windows")
 
     if not window_settings['name']:
         return [0, 0, GetSystemMetrics(0), GetSystemMetrics(1)]
@@ -821,7 +835,7 @@ class Coord(Variable):
             if allowed_empty:
                 return [[]] if self.type == 'coord_list' else []
             else:
-                raise NameError(f"Значение переменной '{self.name}' не найдено для окна '{self.window_info['key']}'")
+                raise SettingsNotCompletedError(f"Значение переменной '{self.name}' не найдено для окна '{self.window_info['key']}'")
 
         value = list(map(float, value_str.split(", ")))
 
@@ -946,7 +960,7 @@ class Simple(Variable):
             if allowed_empty:
                 return eval(f"{self.type}()")
             else:
-                raise NameError(f"Значение переменной '{self.name}' не найдено")
+                raise SettingsNotCompletedError(f"Настройка '{self.name}' не заполнена")
 
         return eval(f"{self.type}(value_str)")
 
@@ -1050,14 +1064,17 @@ class Template(Variable):
                 else:
                     directory = os.path.join(templates_path, 'x'.join(map(str, self.window_info['size'])))
                 templates_path = os.path.join(r"images\templates", directory)
-                if not os.path.exists(templates_path):
-                    os.makedirs(templates_path)
+
+                templates_absolute_path = os.path.join(abs_path_near_exe(templates_path))
+
+                if not os.path.exists(templates_absolute_path):
+                    os.makedirs(templates_absolute_path)
                 template_name = f"{self.key}.png"
                 cv2.imwrite(
-                    os.path.join(templates_path, template_name),
+                    os.path.join(templates_absolute_path, template_name),
                     img[
-                    rectangles['r']['xywh'][1]:rectangles['r']['xywh'][1] + rectangles['r']['xywh'][-1],
-                    rectangles['r']['xywh'][0]:rectangles['r']['xywh'][0] + rectangles['r']['xywh'][-2]
+                        rectangles['r']['xywh'][1]:rectangles['r']['xywh'][1] + rectangles['r']['xywh'][-1],
+                        rectangles['r']['xywh'][0]:rectangles['r']['xywh'][0] + rectangles['r']['xywh'][-2]
                     ]
                 )
 
@@ -1142,7 +1159,7 @@ class Template(Variable):
             if allowed_empty:
                 return []
             else:
-                raise NameError(f"Значение переменной '{self.name}' не найдено для окна '{self.window_info['key']}'")
+                raise SettingsNotCompletedError(f"Значение переменной '{self.name}' не найдено для окна '{self.window_info['key']}'")
 
         value = value_str.split(", ")
 

@@ -18,50 +18,18 @@ import win32gui
 from kivy.properties import DictProperty, ListProperty, NumericProperty, BooleanProperty, StringProperty
 from kivymd.uix.button import MDRectangleFlatIconButton
 from kivymd.uix.label import MDLabel
-from kivymd.uix.snackbar import MDSnackbar
+from kivymd.uix.snackbar import Snackbar
 from win32api import GetSystemMetrics
 from kivy.clock import Clock
 
 from bots.bot import Coord, Simple, Template, get_window_param, to_global
-from bots.common import CustomDialog, VirtualInventory, get_item_info
+from bots.common import CustomDialog, DealPOETrade
+from bots.poe.poe_base import get_item_info
 from bots.poe.poe_base import PoeBase
 from bots.poe.buyer.db_requests import Database
 from bots.poe.buyer.additional_functional import Content, Items, Blacklist
 from controllers import mouse_controller
 from errors import StopStepError
-
-
-@dataclass
-class DealPOETrade(dict):
-    id = ""
-    chaos_qty = 0
-    divine_qty = 0
-    item_qty = 0
-
-    account_name = ""
-    character_name = ""
-    currency = ""
-    currency_min_qty = 0
-    item = ""
-    item_name = ""
-    item_min_qty = 0
-    c_price = 0
-    item_stock = 0
-    profit_per_each = 0
-    profit = 0
-    image = ""
-    whisper = ""
-
-    def get(self, attr, default=None):
-        return getattr(self, attr, super(DealPOETrade, self).get(attr, default))
-
-    def items(self):
-        _items = super(DealPOETrade, self).items()
-
-        return list(_items) + list(self.__dict__.items())
-
-    def get_value(self, key):
-        return self.__dict__.get(key, "")
 
 
 class PoeBuyer(PoeBase):
@@ -106,18 +74,20 @@ class PoeBuyer(PoeBase):
         Clock.schedule_once(self.delayed_init)
 
     def set_task_tab_buttons(self):
-        self.task_tab_buttons = [
-            {
-                'text': "Настройки цен",
-                'icon': 'alert-box-outline',
-                'func': self.open_order
-            },
-            {
-                'text': "Черный список",
-                'icon': 'information-outline',
-                'func': self.open_blacklist
-            },
-        ]
+        self.task_tab_buttons.extend(
+            [
+                {
+                    'text': "Настройки цен",
+                    'icon': 'alert-box-outline',
+                    'func': self.open_order
+                },
+                {
+                    'text': "Черный список",
+                    'icon': 'information-outline',
+                    'func': self.open_blacklist
+                },
+            ]
+        )
 
     def set_tasks(self):
         self.tasks = [
@@ -160,33 +130,19 @@ class PoeBuyer(PoeBase):
                 ]
             },
             {
-                'name': "Ожидание очереди сделок",
-                'timer': 180,
+                'name': "Назначение сделки",
+                'timer': 60,
                 'available_mode': 'always',
                 'stages': [
                     {
                         'func': self.wait_trade_info,
                         'on_error': {'goto': (2, 0)},
                         'name': "Ждать информацию по валюте и очередь сделок"
-                    }
-                ]
-            },
-            {
-                'name': "Подготовка",
-                'timer': 40,
-                'available_mode': 'always',
-                'stages': [
+                    },
                     {
                         'func': self.prepare_service,
                         'name': "Подготовка служебных данных"
                     },
-                ]
-            },
-            {
-                'name': "Запрос сделки",
-                'timer': 60,
-                'available_mode': 'always',
-                'stages': [
                     {
                         'func': self.set_current_deal,
                         'on_error': {'goto': (2, 0)},
@@ -198,7 +154,7 @@ class PoeBuyer(PoeBase):
                     },
                     {
                         'func': self.go_home,
-                        'on_error': {'goto': (3, 0)},
+                        # 'on_error': {'goto': (3, 0)},
                         'name': "ТП в хайдаут"
                     },
                     {
@@ -207,12 +163,12 @@ class PoeBuyer(PoeBase):
                     },
                     {
                         'func': self.wait_party,
-                        'on_error': {'func': lambda x: self.save_current_deal_result(x, 'skipped'), 'goto': (4, 0)},
+                        'on_error': {'func': lambda x: self.save_current_deal_result(x, 'skipped'), 'goto': (2, 2)},
                         'name': "Ждать пати"
                     },
                     {
                         'func': self.teleport,
-                        'on_error': {'goto': (4, 4)},
+                        'on_error': {'goto': (2, 4)},
                         'name': "ТП в хайдаут продавца"
                     },
                 ]
@@ -225,17 +181,17 @@ class PoeBuyer(PoeBase):
                     {
                         'func': self.wait_trade,
                         'name': "Ждать трейд",
-                        'on_error': {'func': lambda x: self.save_current_deal_result(x, 'bad'), 'goto': (3, 0)},
+                        'on_error': {'func': lambda x: self.save_current_deal_result(x, 'bad'), 'goto': (2, 0)},
                     },
                     {
                         'func': self.put_currency,
                         'name': "Положить валюту",
-                        'on_error': {'goto': (5, 0)}
+                        'on_error': {'goto': (3, 0)}
                     },
                     {
                         'func': self.check_items,
                         'name': "Проверить итемы",
-                        'on_error': {'goto': (5, 0)}
+                        'on_error': {'goto': (3, 0)}
                     },
                     {
                         'func': self.set_complete_trade,
@@ -250,7 +206,7 @@ class PoeBuyer(PoeBase):
                 'stages': [
                     {
                         'func': self.wait_confirm,
-                        'on_error': {'goto': (5, 0)},
+                        'on_error': {'goto': (3, 0)},
                         'name': "Дождаться завершения трейда",
                         'on_complete': {'func': lambda x: self.save_current_deal_result(x, 'completed')}
                     },
@@ -539,7 +495,7 @@ class PoeBuyer(PoeBase):
                     window='poe_except_inventory'
                 ),
                 Coord(
-                    key='region_trade_inventory_fields_seller',
+                    key='region_trade_inventory_fields_his',
                     name="Поле ячеек трейда (продавца)",
                     relative=True,
                     snap_mode='ct',
@@ -645,8 +601,8 @@ class PoeBuyer(PoeBase):
 
     @staticmethod
     def notify_in_developing(*_):
-        MDSnackbar(
-            MDLabel(text="В разработке")
+        Snackbar(
+            text="В разработке"
         ).open()
 
     def open_order(self, *_):
@@ -1185,8 +1141,9 @@ class PoeBuyer(PoeBase):
         self.clear_inventory()
 
         self.update_swag_if_necessary()
-        self.from_stash_to_inventory(self.current_deal.divine_qty, 'divine')
-        self.from_stash_to_inventory(self.current_deal.chaos_qty, 'chaos')
+
+        self.from_stash_to_inventory(self.current_deal.divine_qty, 'divine', 10, self.swag['divine'])
+        self.from_stash_to_inventory(self.current_deal.chaos_qty, 'chaos', 10, self.swag['chaos'])
 
     # Временно использую clear_inventory
     def from_inventory_to_stash(self):
@@ -1213,26 +1170,6 @@ class PoeBuyer(PoeBase):
             if attempts > max_attempts:
                 raise StopStepError(f"Не удалось выложить валюту из инвентаря с {attempts} попыток")
 
-    def from_inventory_to_trade(self):
-        inv_region = self.v('region_inventory_fields')
-        trade_my_region = self.v('region_trade_inventory_fields_my')
-
-        cells_for_empty = self.virtual_inventory.get_sorted_cells('empty', exclude=True)
-
-        while True:
-            if not self.find_template('template_trade'):
-                raise StopStepError("Трейд закрылся до завершения")
-
-            self.items_from_cells(inv_region, cells_for_empty)
-            time.sleep(1)
-
-            trade_non_empty_cells = self.get_non_empty_cells(trade_my_region, need_clear_region=False)
-            if len(cells_for_empty) == len(trade_non_empty_cells):
-                return
-
-            if self.stop():
-                raise StopStepError("Не смог выложить валюту из инвентаря в трейд")
-
     def items_from_cells(self, region, cells):
 
         for row, col in cells:
@@ -1250,30 +1187,6 @@ class PoeBuyer(PoeBase):
         self.open_stash()
         self.mouse_move_and_click(*self.v('coord_currency_tab'))
         time.sleep(1)
-
-    def from_stash_to_inventory(self, amount, currency):
-
-        if not amount:
-            return
-
-        stack_size = 10
-        inv_region = self.v('region_inventory_fields')
-
-        if currency == 'divine':
-            stack = self.swag['divine']
-        elif currency == 'chaos':
-            stack = self.swag['chaos']
-        else:
-            raise StopStepError(f"Неверно указана валюта: '{currency}'")
-
-        if stack < amount:
-            raise StopStepError(f"Недостаточно валюты '{currency}': всего {stack}, требуется {amount}")
-
-        whole_part = math.floor(amount // stack_size)
-        remainder_part = amount % stack_size
-
-        self.put_whole_part_in_inventory(inv_region, currency, stack_size, whole_part)
-        self.put_remainder(inv_region, currency, remainder_part)
 
     def get_item_coord(self, item):
         if item == 'divine':
@@ -1327,22 +1240,15 @@ class PoeBuyer(PoeBase):
 
                 if attempt:
                     time.sleep(.2)
-                    self.key_down('ctrl')
-                    time.sleep(.1)
-                    self.mouse_click(*cell_coords, clicks=2, interval=.015)
-                    time.sleep(.1)
-                    self.key_up('ctrl')
-                    time.sleep(.15)
+                    self.key_down('ctrl', sleep_after=.1)
+                    self.mouse_click(*cell_coords, clicks=2, interval=.015, sleep_after=.1)
+                    self.key_up('ctrl', sleep_after=.15)
 
                 if qty >= item_qty_left_in_cell:
-                    self.mouse_move(*item_coord, .1)
-                    time.sleep(.15)
-                    self.key_down('Ctrl')
-                    time.sleep(.15)
-                    self.mouse_click()
-                    time.sleep(.15)
-                    self.key_up('Ctrl')
-                    time.sleep(.15)
+                    self.mouse_move(*item_coord, duration=.1, sleep_after=.15)
+                    self.key_down('Ctrl', sleep_after=.15)
+                    self.mouse_click(sleep_after=.15)
+                    self.key_up('Ctrl', sleep_after=.15)
 
                     self.need_update_swag = True
                     self.update_swag_if_necessary()
@@ -1352,40 +1258,28 @@ class PoeBuyer(PoeBase):
                     if _additional_qty:
                         item_coord, item_qty_left_in_cell = self.get_item_coord_and_qty(item)
 
-                        self.mouse_move(*item_coord, .1)
-                        time.sleep(.15)
-                        self.key_down('Shift')
-                        time.sleep(.15)
-                        self.mouse_click()
-                        time.sleep(.15)
-                        self.key_up('Shift')
-                        time.sleep(.15)
+                        self.mouse_move(*item_coord, duration=.1, sleep_after=.15)
+                        self.key_down('Shift', sleep_after=.15)
+                        self.mouse_click(sleep_after=.15)
+                        self.key_up('Shift', sleep_after=.15)
                         pyautogui.write(f'{qty}')
                         time.sleep(.15)
                         pyautogui.press('Enter')
                         time.sleep(.15)
-                        self.mouse_move(*cell_coords)
-                        time.sleep(.15)
-                        self.mouse_click()
-                        time.sleep(.15)
+                        self.mouse_move(*cell_coords, sleep_after=.15)
+                        self.mouse_click(sleep_after=.15)
 
                 else:
-                    self.mouse_move(*item_coord, .1)
-                    time.sleep(.15)
-                    self.key_down('Shift')
-                    time.sleep(.15)
-                    self.mouse_click()
-                    time.sleep(.15)
-                    self.key_up('Shift')
-                    time.sleep(.15)
+                    self.mouse_move(*item_coord, duration=.1, sleep_after=.15)
+                    self.key_down('Shift', sleep_after=.15)
+                    self.mouse_click(sleep_after=.15)
+                    self.key_up('Shift', sleep_after=.15)
                     pyautogui.write(f'{qty}')
                     time.sleep(.15)
                     pyautogui.press('Enter')
                     time.sleep(.15)
-                    self.mouse_move(*cell_coords)
-                    time.sleep(.15)
-                    self.mouse_click()
-                    time.sleep(.15)
+                    self.mouse_move(*cell_coords, sleep_after=.15)
+                    self.mouse_click(sleep_after=.15)
 
             counted = self.get_items_qty_in_cell(cell_coords)
 
@@ -1393,7 +1287,8 @@ class PoeBuyer(PoeBase):
 
         self.virtual_inventory.put_item(item, qty, first_empty_cell)
 
-        self.mouse_move(1, 1)
+        with mouse_controller:
+            self.mouse_move(1, 1)
 
     def change_whole_part_in_inventory(self, inv_region, currency_coord, item, stack_size, whole_part_qty):
         cells_with_item = self.virtual_inventory.get_sorted_cells(item)
@@ -1596,15 +1491,19 @@ class PoeBuyer(PoeBase):
         else:
             return 0
 
-    def _get_line_with_new_qty(self, ):
+    def _get_line_with_new_qty(self):
         new_qty_words = ['left', 'only', 'have']
 
         with open(self.v('logs_path'), 'r', encoding="utf-8") as f:
             for line in f:
-                for word in new_qty_words:
-                    if word in line.lower():
-                        print(f"Найдено слово '{word}' в строке '{line}'")
-                        return line.split('@From')[1]
+                if self.current_deal.character_name in line:
+                    for word in new_qty_words:
+                        if word in line.lower():
+                            print(f"Найдено слово '{word}' в строке '{line}'")
+                            try:
+                                return line.split('@From')[1]
+                            except IndexError:
+                                pass
 
         return ""
 
@@ -1657,13 +1556,13 @@ class PoeBuyer(PoeBase):
 
     def check_items(self):
         qty = 0
-        region = self.v('region_trade_inventory_fields_seller')
+        region = self.v('region_trade_inventory_fields_his')
         while qty < self.current_deal.item_qty:
 
             if not self.find_template('template_trade'):
                 raise StopStepError("Трейд закрылся до завершения")
 
-            qty = self.count_sellers_items(region, self.current_deal.item_name)
+            qty = self.count_items(region, self.current_deal.item_name)
 
             if self.stop():
                 raise StopStepError(

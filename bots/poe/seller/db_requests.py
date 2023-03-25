@@ -14,64 +14,47 @@ class Database:
         self.con.commit()
 
     def sqlite_create_db(self):
+        # Инфа по ячейкам стеша
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cells_info(
+                tab_number TEXT NOT NULL,
+                tab_type TEXT NOT NULL,
+                cell_id TEXT NOT NULL,
+                section TEXT NOT NULL,
+                x FLOAT NOT NULL,
+                y FLOAT NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (tab_number, cell_id) ON CONFLICT REPLACE
+            ) 
+            """)
 
         # Предметы
         self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS items(
-                item TEXT PRIMARY KEY ON CONFLICT REPLACE,
-                use BOOL NOT NULL,
-                max_price REAL NOT NULL,
-                bulk_price REAL NOT NULL,
-                max_qty INT NOT NULL
-            ) 
-            """)
-
-        # Все предметы ПОЕ
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS poe_items(
-                category TEXT NOT NULL,
+                tab_number TEXT NOT NULL,
+                cell_id TEXT NOT NULL,
+                is_layout BOOL NOT NULL,
                 item TEXT NOT NULL,
-                name TEXT NOT NULL,
-                image TEXT NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (category, item) ON CONFLICT REPLACE
-            ) 
-            """)
-
-        # История сделок
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS deals_history(
-                date INT NOT NULL,
-                id BOOL NOT NULL,
-                character_name TEXT NOT NULL,
-                completed BOOL NOT NULL,
-                error TEXT DEFAULT "",
-                last_stage TEXT NOT NULL,
-                item TEXT NOT NULL,
-                qty INT NOT NULL,
-                c_price REAL NOT NULL,
-                profit REAL NOT NULL,
-                deal_time INT DEFAULT 0
-            ) 
-            """)
-
-        # Блеклист
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS blacklist(
-                date INT NOT NULL,
-                character_name TEXT NOT NULL,
-                good BOOL NOT NULL,
-                bad BOOL NOT NULL,
-                CONSTRAINT pk PRIMARY KEY (date, character_name) ON CONFLICT REPLACE
+                item_name TEXT NOT NULL,
+                typeLine TEXT NOT NULL,
+                baseType TEXT NOT NULL,
+                w INTEGER NOT NULL,
+                h INTEGER NOT NULL,
+                icon TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                stack_size INTEGER NOT NULL,
+                min_qty INTEGER NOT NULL,
+                price_for_min_qty INTEGER NOT NULL,
+                currency TEXT NOT NULL,
+                identified BOOL NOT NULL,
+                ilvl INTEGER NOT NULL,
+                CONSTRAINT pk PRIMARY KEY (tab_number, cell_id) ON CONFLICT REPLACE
             ) 
             """)
 
     def initial_setup(self):
         self.fill_default()
-
         self.commit()
 
     def fill_default(self):
@@ -85,38 +68,94 @@ class Database:
         #     """)
         pass
 
-    def save_settings(self, values):
-
+    def clear_cells_info(self):
         self.cur.execute(
-            f"""
+            """
+            DELETE FROM
+                cells_info
+            """
+        )
+        self.commit()
+
+    def save_cells_info(self, values):
+        self.cur.executemany(
+            """
             INSERT INTO
-                settings
+                cells_info
             VALUES
-                {','.join(map(str, values))}
+                (?,?,?,?,?,?)
+            """,
+            values
+        )
+        self.commit()
+
+    def clear_items(self):
+        self.cur.execute(
+            """
+            DELETE FROM
+                items
             """
         )
         self.commit()
 
     def save_items(self, values):
-
-        self.cur.execute(
-            f"""
-            DELETE FROM
-                items
+        self.cur.executemany(
             """
-        )
-
-        self.cur.execute(
-            f"""
             INSERT INTO
                 items
             VALUES
-                {','.join(map(str, values))}
-            """
+                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            values
         )
         self.commit()
 
-    def change_item_qty(self, item, delta_qty):
+    def get_item_info(self, item_name, position):
+        pos_condition = "AND items.tab_number = {} AND items.cell_id = {}".format(
+            position['tab'], ",".join(map(str, [position['col'], position['row']]))) if position is not None else ""
+
+        self.cur.execute(
+            f"""
+            SELECT
+                CAST(items.tab_number as INT) as tab_number
+                ,items.cell_id
+                ,items.is_layout
+                ,items.item
+                ,items.item_name
+                ,items.typeLine
+                ,items.baseType
+                ,items.w
+                ,items.p
+                ,items.icon
+                ,items.qty
+                ,items.stack_size
+                ,items.min_qty
+                ,items.price_for_min_qty
+                ,items.currency
+                ,items.identified
+                ,items.ilvl
+                ,IFNULL(cells_info.tab_type, "") as tab_type
+                ,IFNULL(cells_info.section, "") as section
+                ,IFNULL(cells_info.x, 0) as x
+                ,IFNULL(cells_info.y, 0) as y
+            FROM
+                items
+                LEFT JOIN 
+                    cells_info
+                ON 
+                    items.tab_number = cells_info.tab_number
+                    AND items.cell_id = cells_info.cell_id
+            WHERE
+                items.item_name = ?
+                {pos_condition}
+            """,
+            [item_name, ]
+        )
+        return self.cur.fetchone()
+
+    def change_item_qty(self, item_name, position, qty):
+        pos_condition = "AND tab_number = {} AND cell_id = {}".format(
+            position['tab'], ",".join(map(str, [position['col'], position['row']]))) if position is not None else ""
 
         self.cur.execute(
             f"""
@@ -125,174 +164,10 @@ class Database:
             SET
                 max_qty = max_qty + ?
             WHERE
-                item = ?
+                item_name = ?
+                {pos_condition}
             """,
-            [delta_qty, item]
-        )
-        self.commit()
-
-    def save_poe_items(self, values):
-
-        self.cur.execute(
-            f"""
-            DELETE FROM
-                poe_items
-            """
-        )
-
-        self.cur.execute(
-            f"""
-            INSERT INTO
-                poe_items
-            VALUES
-                {','.join(map(str, values))}
-            """
-        )
-        self.commit()
-
-    def get_items(self, items=None):
-
-        if items is None:
-            item = None
-        elif isinstance(items, str):
-            item = items
-        elif len(items) == 1:
-            item = items[0]
-        else:
-            item = None
-
-        if item:
-            where = f'WHERE poe_items.item = "{item}"'
-        elif items:
-            where = f'WHERE poe_items.item in {tuple(items)}'
-        else:
-            where = f'WHERE items.item IS NOT NULL'
-
-        self.cur.execute(
-            f"""
-            SELECT 
-                poe_items.item,
-                poe_items.name,
-                poe_items.image,
-                IFNULL(items.use, False) as use,
-                IFNULL(items.max_price, 0) as max_price,
-                IFNULL(items.bulk_price, 0) as bulk_price,
-                IFNULL(items.max_qty, 0) as max_qty
-            FROM
-                poe_items
-                LEFT JOIN items
-                    ON poe_items.item = items.item
-            {where}
-            """)
-
-        return self.cur.fetchall()
-
-    def get_categories(self):
-
-        self.cur.execute(
-            f"""
-            SELECT DISTINCT 
-                category
-            FROM
-                poe_items
-            """)
-
-        return self.cur.fetchall()
-
-    def get_poe_items(self, category=None, search=None):
-
-        where = ""
-        if category:
-            where += f"WHERE category = '{category}'"
-        if search:
-            search = "%" + "%".join(search.split(" ")) + "%"
-
-            if where:
-                where += f" AND name LIKE '{search}'"
-            else:
-                where += f"WHERE name LIKE '{search}'"
-
-        self.cur.execute(
-            f"""
-            SELECT 
-                *
-            FROM
-                poe_items
-            {where}
-            """)
-
-        return self.cur.fetchall()
-
-    def get_poe_item_image(self, item):
-
-        self.cur.execute(
-            f"""
-            SELECT 
-                image
-            FROM
-                poe_items
-            WHERE item = "{item}"
-            """)
-
-        return self.cur.fetchone()['image']
-
-    def save_deal_history(self, values):
-
-        self.cur.execute(
-            """
-            INSERT INTO 
-                deals_history
-            VALUES
-                (?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            values
+            [qty, item_name]
         )
 
         self.commit()
-
-    def get_last_deals(self, qty=10):
-
-        self.cur.execute(
-            """
-            SELECT 
-                id
-            FROM
-                deals_history
-            ORDER BY date DESC LIMIT ?
-            """,
-            (qty,)
-            )
-
-        return [r['id'] for r in self.cur.fetchall()]
-
-    def update_blacklist(self, values):
-
-        self.cur.execute(
-            """
-            INSERT INTO 
-                blacklist
-            VALUES
-                (?,?,?,?)
-            """,
-            values
-        )
-
-        self.commit()
-
-    def checkin_blacklist(self, character_name):
-
-        self.cur.execute(
-            """
-            SELECT 
-                IFNULL(SUM(bad - good), 0) as bads
-            FROM
-                blacklist
-            WHERE
-                character_name = ?
-            """,
-            (character_name,)
-            )
-
-        result = self.cur.fetchone()
-
-        return result['bads'] >= 10

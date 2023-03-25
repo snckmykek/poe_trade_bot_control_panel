@@ -19,7 +19,7 @@ from kivymd.uix.tab import MDTabs
 import bots.common
 
 app = MDApp.get_running_app()
-Builder.load_file("setting_tab.kv")
+Builder.load_file(os.path.abspath(os.path.join(os.path.dirname(__file__), "setting_tab.kv")))
 
 
 class AppSettingTab(MDStackLayout):
@@ -370,7 +370,7 @@ class VariablesRow(MDBoxLayout):
         """
         Обработчик нажатия в область иконки текстового поля. Так как иконка - это не объект, а просто текстура
         (картинка), от событие срабатывает, когда: нажатие попало в объект текстового поля, нажатие правее позиции
-        картинки. Расчет позиции картинки взял из kivymd/uix/textfield/textfield.kv
+        картинки. Расчет позиции картинки взят из kivymd/uix/textfield/textfield.kv
         """
         tf = self.ids.tf  # Объект текстового поля
         if not (tf.collide_point(*touch.pos) and tf._icon_right_label):

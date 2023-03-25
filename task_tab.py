@@ -9,14 +9,14 @@ from kivy.properties import StringProperty, BooleanProperty, NumericProperty, Li
     ObjectProperty
 from kivy.uix.behaviors import ButtonBehavior
 from kivymd.app import MDApp
-from kivymd.uix.behaviors import RoundedRectangularElevationBehavior
+from kivymd.uix.behaviors import RoundedRectangularElevationBehavior, CommonElevationBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.card import MDCard
 from kivymd.uix.list import OneLineIconListItem
 from kivymd.uix.snackbar import Snackbar
 
 app = MDApp.get_running_app()
-Builder.load_file(os.path.join(dirname(__file__), "task_tab.kv"))
+Builder.load_file(os.path.abspath(os.path.join(os.path.dirname(__file__), "task_tab.kv")))
 
 
 class TaskTab(MDBoxLayout):
@@ -62,7 +62,7 @@ class TaskTab(MDBoxLayout):
             app.main.first_run_animation_after()
 
 
-class TaskBox(MDCard, RoundedRectangularElevationBehavior, ButtonBehavior):
+class TaskBox(MDCard, CommonElevationBehavior, ButtonBehavior):
     _anim_timer = None
     _max_opacity = NumericProperty(1)
     _min_opacity = NumericProperty(.3)

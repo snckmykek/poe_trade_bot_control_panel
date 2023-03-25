@@ -352,7 +352,7 @@ def item_name_from_text(text):
     return text.split(' (')[0]
 
 
-class DealOneLineIconListItem(OneLineIconListItem):
+class BuyerDealListItem(OneLineIconListItem):
     item = StringProperty()
     currency = StringProperty()
     image = StringProperty()
