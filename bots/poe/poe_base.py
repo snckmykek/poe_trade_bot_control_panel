@@ -400,7 +400,7 @@ class PoeBase(Bot):
 
     # region Работа с инвентарем
 
-    def clear_inventory(self, once=False):
+    def clear_inventory(self, manual=False):
         region = self.v('region_inventory_fields')
 
         rows = 12
@@ -414,7 +414,10 @@ class PoeBase(Bot):
         max_attempts = self.v('max_attempts')
         attempts = 0
         while True:
-            self.open_stash()
+            self.check_freeze()
+
+            if not manual:
+                self.open_stash()
 
             non_empty_cells = self.get_non_empty_cells(region)
 
@@ -424,13 +427,11 @@ class PoeBase(Bot):
             if attempts > max_attempts:
                 raise StopStepError(f"Не смог выложить предметы из инвентаря с {attempts} попыток")
 
-            self.check_freeze()
-
             with mouse_controller:
                 self.key_down('ctrl')
                 for row, col in non_empty_cells:
                     cell_coord = [x_reg + (col + .5) * w_cell, y_reg + (row + .5) * h_cell]
-                    if once:
+                    if manual:
                         # pyautogui.moveTo(*cell_coord)
                         pyautogui.click(*cell_coord, clicks=2)
                         time.sleep(.013)
@@ -439,7 +440,7 @@ class PoeBase(Bot):
                     time.sleep(.015 * attempts)
                 self.key_up('ctrl')
 
-            if once:
+            if manual:
                 break
 
             attempts += 1
@@ -497,7 +498,8 @@ class PoeBase(Bot):
 
         if item:
             template_path = f"https://web.poecdn.com{self.get_item_image(item)}"
-            template_size = [int(region[-2] / 12), int(region[-1] / 5)]
+            item_size = self.get_item_size(item)
+            template_size = [int(region[-2] / 12) * item_size['w'], int(region[-1] / 5) * item_size['h']]
         else:
             template_settings = self.v('template_empty_field')
             template_path = template_settings['path']
@@ -574,7 +576,10 @@ class PoeBase(Bot):
         return img[x_tab_h:h, 0:w - extend_w_value]
 
     def get_item_image(self, item):
-        raise NotImplementedError("Не переназначена функция get_item_image, для каждого бота нужно назначить свою")
+        raise NotImplementedError("Не переназначена функция, для каждого бота нужно назначить свою")
+
+    def get_item_size(self, item):
+        raise NotImplementedError("Не переназначена функция, для каждого бота нужно назначить свою")
 
     def get_template_params(self, template_path, template_size, accuracy=None, use_mask=False, is_item=False):
         """
@@ -617,7 +622,7 @@ class PoeBase(Bot):
 
         return mask
 
-    def from_stash_to_inventory(self, amount, item, stack_size, stack):
+    def from_stash_to_inventory(self, amount, item, stack_size, stack, item_size=(1, 1)):
         if not amount:
             return
 
@@ -629,8 +634,8 @@ class PoeBase(Bot):
         whole_part = math.floor(amount // stack_size)
         remainder_part = amount % stack_size
 
-        self.put_whole_part_in_inventory(inv_region, item, stack_size, whole_part)
-        self.put_remainder(inv_region, item, remainder_part)
+        self.put_whole_part_in_inventory(inv_region, item, stack_size, whole_part, item_size)
+        self.put_remainder(inv_region, item, remainder_part, item_size)
         
     def from_inventory_to_trade(self):
         inv_region = self.v('region_inventory_fields')
@@ -652,7 +657,7 @@ class PoeBase(Bot):
             if self.stop():
                 raise StopStepError("Не смог выложить из инвентаря в трейд")
 
-    def put_remainder(self, inv_region, item, qty):
+    def put_remainder(self, inv_region, item, qty, item_size):
         if qty == 0:
             return
 
@@ -667,7 +672,7 @@ class PoeBase(Bot):
         while qty != counted:
 
             if self.stop() or attempt >= 5:
-                raise StopStepError("Не смог выложить нецелую часть валюты")
+                raise StopStepError(f"Не смог выложить нецелую часть валюты c {attempt} попыток")
 
             self.check_freeze()
 
@@ -704,7 +709,7 @@ class PoeBase(Bot):
 
             attempt += 1
 
-        self.virtual_inventory.put_item(item, qty, first_empty_cell)
+        self.virtual_inventory.put_item(item, qty, first_empty_cell, item_size)
 
         with mouse_controller:
             self.mouse_move(1, 1)
@@ -712,7 +717,7 @@ class PoeBase(Bot):
     def get_item_coord_and_qty(self, item):
         raise NotImplementedError("Для каждого бота ПОЕ функция должна быть реализована отдельно")
 
-    def put_whole_part_in_inventory(self, inv_region, item, stack_size, whole_part_qty):
+    def put_whole_part_in_inventory(self, inv_region, item, stack_size, whole_part_qty, item_size):
         if whole_part_qty == 0:
             return
 
@@ -727,7 +732,7 @@ class PoeBase(Bot):
         counted = 0
         while counted != whole_part_qty:
             if self.stop() or attempt >= 5:
-                raise StopStepError(f"Не смог взять валюту из стеша с {attempt} попыток")
+                raise StopStepError(f"Не смог взять целую часть итемов из стеша с {attempt} попыток")
 
             self.check_freeze()
 
@@ -747,7 +752,7 @@ class PoeBase(Bot):
 
         # Записываем в вирт инвент
         for cell_pos in cells_with_items_from_screen:
-            self.virtual_inventory.put_item(item, stack_size, cell_pos)
+            self.virtual_inventory.put_item(item, stack_size, cell_pos, item_size)
 
         with mouse_controller:
             self.mouse_move(1, 1)
@@ -860,7 +865,7 @@ class Helper(MDBoxLayout):
     def add_hotkeys(self):
         def clear_inv(*_):
             try:
-                MDApp.get_running_app().bot.clear_inventory(once=True)
+                MDApp.get_running_app().bot.clear_inventory(manual=True)
             except Exception as e:
                 MDApp.get_running_app().set_status(f"{str(type(e))} {str(e)}")
 
@@ -933,7 +938,7 @@ class VirtualInventory:
 
         return cells
 
-    def put_item(self, item, qty=1, cell_coord=None):
+    def put_item(self, item, qty=1, cell_coord=None, item_size=(1, 1)):
         if cell_coord:
             row, col = cell_coord
         else:

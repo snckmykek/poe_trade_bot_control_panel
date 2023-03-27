@@ -575,7 +575,7 @@ class Bot(EventDispatcher):
         # Редактирование точности (алгоритм поиска: светлые картинки на светлом фоне выделяет сильнее)
         # Все пиксели, кроме пустых (они будут вырезаны маской) и черных (так уж получилось, но это не влияет)
         if accuracy is None:
-            accuracy = .89
+            accuracy = .85
 
         avg_value = np.average(template[template != 0])
         if avg_value < 40:

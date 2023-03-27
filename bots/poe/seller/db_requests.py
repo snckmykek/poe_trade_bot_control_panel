@@ -33,6 +33,7 @@ class Database:
             """
             CREATE TABLE IF NOT EXISTS items(
                 tab_number TEXT NOT NULL,
+                tab_name TEXT NOT NULL,
                 cell_id TEXT NOT NULL,
                 is_layout BOOL NOT NULL,
                 item TEXT NOT NULL,
@@ -104,15 +105,19 @@ class Database:
             INSERT INTO
                 items
             VALUES
-                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             values
         )
         self.commit()
 
     def get_item_info(self, item_name, position):
-        pos_condition = "AND items.tab_number = {} AND items.cell_id = {}".format(
-            position['tab'], ",".join(map(str, [position['col'], position['row']]))) if position is not None else ""
+        if position is not None:
+            tab_name = position['tab']
+            cell_id = ",".join(map(str, [position['col'], position['row']]))
+        else:
+            tab_name = ""
+            cell_id = ""
 
         self.cur.execute(
             f"""
@@ -125,7 +130,7 @@ class Database:
                 ,items.typeLine
                 ,items.baseType
                 ,items.w
-                ,items.p
+                ,items.h
                 ,items.icon
                 ,items.qty
                 ,items.stack_size
@@ -146,28 +151,33 @@ class Database:
                     items.tab_number = cells_info.tab_number
                     AND items.cell_id = cells_info.cell_id
             WHERE
-                items.item_name = ?
-                {pos_condition}
+                (items.item_name = ? AND items.is_layout)
+                OR (items.item_name = ? AND items.tab_name = ? AND items.cell_id = ?)
             """,
-            [item_name, ]
+            [item_name, item_name, tab_name, cell_id]
         )
         return self.cur.fetchone()
 
-    def change_item_qty(self, item_name, position, qty):
-        pos_condition = "AND tab_number = {} AND cell_id = {}".format(
-            position['tab'], ",".join(map(str, [position['col'], position['row']]))) if position is not None else ""
+    def change_item_qty(self, item_name, qty, position):
+
+        if position is not None:
+            condition = "AND tab_number = ? AND cell_id = ?"
+            values = [qty, item_name, position['tab'], ",".join(map(str, [position['col'], position['row']]))]
+        else:
+            condition = ""
+            values = [qty, item_name]
 
         self.cur.execute(
             f"""
             UPDATE
                 items
             SET
-                max_qty = max_qty + ?
+                qty = qty + ?
             WHERE
                 item_name = ?
-                {pos_condition}
+                {condition}
             """,
-            [qty, item_name]
+            values
         )
 
         self.commit()

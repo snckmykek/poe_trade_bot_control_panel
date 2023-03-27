@@ -45,6 +45,12 @@ class DealPOETrade(dict):
     profit = 0
     whisper = ""
 
+    received_currency: dict = None
+    added_timestamp: int = 0
+
+    item_info: dict = None
+    position: dict = None
+
     def get(self, attr, default=None):
         return getattr(self, attr, super(DealPOETrade, self).get(attr, default))
 
