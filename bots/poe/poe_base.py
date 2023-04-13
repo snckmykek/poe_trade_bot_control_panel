@@ -77,6 +77,21 @@ class PoeBase(Bot):
                     name="Дополнительная задержка после действий мыши и клавиатуры (ms)",
                     type='int'
                 ),
+                Simple(
+                    key='telegram_bot_token',
+                    name="Токен бота, от чьего имени будет отправляться сообщение в чаты (должен быть админом в чате)",
+                    type='str'
+                ),
+                Simple(
+                    key='telegram_chat_ids',
+                    name="Список ID чатов телеграм через запятую, для рассылки ошибок бота",
+                    type='str'
+                ),
+                Simple(
+                    key='user_name',
+                    name="Имя пользователя (Используется при рассылке в телегу об ошибках)",
+                    type='str'
+                ),
             ],
             'Инвентарь': [
                 Simple(
@@ -230,6 +245,21 @@ class PoeBase(Bot):
                     relative=True,
                     snap_mode='ct',
                     type='region',
+                    window='poe_except_inventory'
+                ),
+                Template(
+                    key='template_accept',
+                    name="Кнопка ACCEPT при запросе пати или трейда",
+                    region=Coord(
+                        key='region_accept',
+                        name="",
+                        relative=True,
+                        snap_mode='ct',
+                        type='region',
+                        window='poe_except_inventory'
+                    ),
+                    relative=True,
+                    type='template',
                     window='poe_except_inventory'
                 ),
                 Template(
@@ -414,12 +444,11 @@ class PoeBase(Bot):
         max_attempts = self.v('max_attempts')
         attempts = 0
         while True:
-            self.check_freeze()
-
             if not manual:
+                self.check_freeze()
                 self.open_stash()
 
-            non_empty_cells = self.get_non_empty_cells(region)
+            non_empty_cells = self.get_non_empty_cells(region, need_clear_region=not manual)
 
             if not len(non_empty_cells):
                 break
@@ -433,8 +462,9 @@ class PoeBase(Bot):
                     cell_coord = [x_reg + (col + .5) * w_cell, y_reg + (row + .5) * h_cell]
                     if manual:
                         # pyautogui.moveTo(*cell_coord)
-                        pyautogui.click(*cell_coord, clicks=2)
-                        time.sleep(.013)
+                        # pyautogui.click(*cell_coord, clicks=2)
+                        # time.sleep(.013)
+                        self.mouse_click(cell_coord, clicks=2, interval=.015)
                     else:
                         self.mouse_click(cell_coord, clicks=2, interval=.015)
                     time.sleep(.015 * attempts)
@@ -474,8 +504,9 @@ class PoeBase(Bot):
                 self.mouse_click()
                 self.key_up('ctrl')
 
-    def get_non_empty_cells(self, region, need_clear_region=True):
-        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region, need_clear_region=need_clear_region)
+    def get_non_empty_cells(self, region, need_clear_region=True, accuracy=None):
+        cells_matrix_from_screen = self.get_cells_matrix_from_screen(region, need_clear_region=need_clear_region,
+                                                                     accuracy=accuracy)
         non_empty_cells_coords = sorted(zip(*np.where(cells_matrix_from_screen == 0)), key=itemgetter(1))
         return non_empty_cells_coords
 
@@ -490,7 +521,7 @@ class PoeBase(Bot):
         cells_with_item = list(zip(*np.where(cells_matrix_from_screen == 1)))
         return cells_with_item
 
-    def get_cells_matrix_from_screen(self, region, item=None, need_clear_region=True):
+    def get_cells_matrix_from_screen(self, region, item=None, need_clear_region=True, accuracy=None):
         """
         Возвращает 2-мерную матрицу, где 0 - ячейка без найденного шаблона,
          1 - заполненная найденным шаблоном (даже шаблоном пустой ячейки)
@@ -511,7 +542,8 @@ class PoeBase(Bot):
         }
 
         template.update(
-            self.get_template_params(template_path, template_size, use_mask=bool(item), is_item=bool(item))
+            self.get_template_params(
+                template_path, template_size, accuracy=accuracy, use_mask=bool(item), is_item=bool(item))
         )
 
         if need_clear_region:
@@ -538,12 +570,12 @@ class PoeBase(Bot):
 
         poe_xywh = get_window_param('poe')
         extend_w_value = (poe_xywh[0] + poe_xywh[2]) - (region[0] + region[2])
-        x_tab_h = x_tab_template['size'][1] * 2
+        extend_h_value = x_tab_template['size'][1] * 2
         extended_inventory_region = [
             region[0],
-            region[1] - x_tab_h,
+            region[1] - extend_h_value,
             region[2] + extend_w_value,
-            region[3] + x_tab_h
+            region[3] + extend_h_value
         ]
 
         w = extended_inventory_region[2]
@@ -551,7 +583,7 @@ class PoeBase(Bot):
 
         while True:
             img = self.get_screen_region(extended_inventory_region, True)
-            x_tab_offset_x = w - x_tab_h
+            x_tab_offset_x = w - extend_h_value
 
             x_tabs_img = img[:, x_tab_offset_x:w]
             x_tabs_coords = self.match_templates(x_tabs_img, x_tab_template, 'all')
@@ -561,19 +593,22 @@ class PoeBase(Bot):
             if not x_tabs_coords and not accept_coords:
                 break
 
-            for x_tab_coords in x_tabs_coords:
-                self.check_freeze()
+            with mouse_controller:
+                self.key_down('ctrl', sleep_after=.15)
+                for x_tab_coords in x_tabs_coords:
+                    self.check_freeze()
 
-                x_tab_x, x_tab_y, x_tab_w, x_tab_h = x_tab_coords
-                self.mouse_move_and_click(
-                    *to_global(
-                        extended_inventory_region, [x_tab_offset_x + x_tab_x + x_tab_w * .5, x_tab_y + x_tab_h * .5]
+                    x_tab_x, x_tab_y, x_tab_w, x_tab_h = x_tab_coords
+                    self.mouse_move_and_click(
+                        *to_global(
+                            extended_inventory_region, [x_tab_offset_x + x_tab_x + x_tab_w * .5, x_tab_y + x_tab_h * .5]
+                        )
                     )
-                )
+                self.key_up('ctrl', sleep_after=.15)
 
             time.sleep(1)
 
-        return img[x_tab_h:h, 0:w - extend_w_value]
+        return img[extend_h_value:h, 0:w - extend_w_value]
 
     def get_item_image(self, item):
         raise NotImplementedError("Не переназначена функция, для каждого бота нужно назначить свою")
@@ -651,8 +686,11 @@ class PoeBase(Bot):
             time.sleep(1)
 
             trade_non_empty_cells = self.get_non_empty_cells(trade_my_region, need_clear_region=False)
+
             if len(cells_for_empty) == len(trade_non_empty_cells):
                 return
+            else:
+                self.print_log(f"Количество непустых ячеек в трейде: {len(trade_non_empty_cells)}")
 
             if self.stop():
                 raise StopStepError("Не смог выложить из инвентаря в трейд")
@@ -705,7 +743,7 @@ class PoeBase(Bot):
                     self.mouse_move(*cell_coords, sleep_after=.15)
                     self.mouse_click(sleep_after=.15)
 
-            counted = self.get_items_qty_in_cell(cell_coords)
+            _, counted = self.get_item_and_qty_in_cell(cell_coords)
 
             attempt += 1
 
@@ -745,7 +783,8 @@ class PoeBase(Bot):
                 self.mouse_click(*item_coord, clicks=need_more, interval=.035, sleep_after=.035)
                 self.key_up('ctrl', sleep_after=.15)
 
-            cells_with_items_from_screen = self.get_cells_with_item(inv_region, item=item, need_clear_region=True)
+            cells_with_items_from_screen = self.get_non_empty_cells(inv_region, need_clear_region=True)
+
             counted = len(cells_with_items_from_screen)
 
             attempt += 1
@@ -757,33 +796,48 @@ class PoeBase(Bot):
         with mouse_controller:
             self.mouse_move(1, 1)
 
-    def count_items(self, inv_region, item_name):
-        cells_positions = self.get_non_empty_cells(inv_region, need_clear_region=False)
+    def count_items(self, inv_region, accuracy=None):
+        cells_positions = self.get_non_empty_cells(inv_region, need_clear_region=False, accuracy=accuracy)
 
-        qty = 0
+        items_qty = {}
         for row, col in cells_positions:
             cell_coords = self.cell_coords_by_position(inv_region, col, row)
-            qty += self.get_items_qty_in_cell(cell_coords, item_name)
+            item_name, qty = self.get_item_and_qty_in_cell(cell_coords)
 
-        # TODO Вынести в отдельную логику ситуации, когда товар большой на несколько яч ячейках (сейчас каждую считает)
-        if item_name == 'Prime Chaotic Resonator':
-            qty = round(qty / 4)
+            if item_name and qty:
+                try:
+                    items_qty[item_name] += qty
+                except KeyError:
+                    items_qty[item_name] = qty
+            else:
+                self.print_log(f"В ячейке col: {col}, row: {row} не распознан итем: '{item_name}' или кол-во: {qty}")
 
-        self.print_log(f"Подсчитано {item_name}: {qty}")
+        items_qty = self.adjust_qty_by_item_size(items_qty)
 
-        return qty
+        self.print_log(f"Подсчитано {items_qty}")
 
-    @staticmethod
-    def get_items_qty_in_cell(cell_coords, item_name=""):
+        return items_qty
+
+    def adjust_qty_by_item_size(self, items_qty):
+
+        for item_name in items_qty.keys():
+            item_size = self.get_item_size(item_name)
+            item_size_coef = item_size['w'] * item_size['h']
+
+            if item_size_coef > 1:
+                items_qty[item_name] /= item_size_coef
+
+        return items_qty
+
+    def get_item_and_qty_in_cell(self, cell_coords):
+
         with mouse_controller:
-            item_info = get_item_info(['quantity', 'item_name'], cell_coords)
+            item_info = self.get_item_info_by_ctrl_c(['quantity', 'item_name'], cell_coords)
 
-        qty = 0
-        item_name_from_clipboard = item_info.get('item_name', "")
-        if not item_name or item_name.lower() in item_name_from_clipboard.lower():
-            qty = item_info.get('quantity', 0)
+        item_name = item_info.get('item_name', "")
+        qty = item_info.get('quantity', 0)
 
-        return qty
+        return item_name, qty
 
     @staticmethod
     def cell_coords_by_position(inv_region, col, row):
@@ -813,13 +867,48 @@ class PoeBase(Bot):
     def clear_logs(self):
         open(self.v('logs_path'), 'w').close()
 
-    @staticmethod
-    def send_to_chat(message):
-        pyautogui.press('enter')
-        time.sleep(.15)
-        keyboard.write(message, delay=0)
-        time.sleep(.05)
-        pyautogui.press('enter')
+    def send_to_chat(self, message):
+        with mouse_controller:
+            pyautogui.press('enter')
+            time.sleep(.15 + self.v('button_delay_ms')/1000)
+            keyboard.write(message, delay=0)
+            time.sleep(.05 + self.v('button_delay_ms')/1000)
+            pyautogui.press('enter')
+            time.sleep(self.v('button_delay_ms')/1000)
+
+    def get_item_info_by_ctrl_c(self, keys: list, cell_coord: list) -> dict:
+
+        item_info = {}
+
+        attempts = 0
+        while True:
+            self.mouse_move(*cell_coord, duration=.015)
+            item_info_text = self.get_item_info_text_from_clipboard(
+                delay=self.v('button_delay_ms')/1000 * (attempts + 1))
+            
+            if item_info_text:
+                break
+            
+            if attempts >= 2:
+                return item_info
+            attempts += 1
+
+        item_info_parts = [[line for line in part.split('\r\n') if line] for part in item_info_text.split('--------')]
+
+        for key in keys:
+            value = find_item_info_by_key(item_info_parts, key)
+            item_info.update({key: value})
+
+        return item_info
+
+    def get_item_info_text_from_clipboard(self, delay=.0):
+        pyperclip.copy("")
+        time.sleep(max(delay, .035))
+        keyboard.send(['ctrl', 46])  # ctrl+c (англ.)
+        time.sleep(max(delay, .035))
+        item_info_text = pyperclip.paste()
+
+        return item_info_text
 
     # endregion
 
@@ -944,8 +1033,10 @@ class VirtualInventory:
         else:
             row, col = self.get_first_cell()
 
-        cell = self.cells_matrix[row][col]
-        cell.put(item, qty)
+        for i in range(item_size[0]):
+            for j in range(item_size[1]):
+                cell = self.cells_matrix[row + i][col + j]
+                cell.put(item, qty)
 
     def empty_cell(self, row, col):
         cell = self.cells_matrix[row][col]
@@ -997,35 +1088,6 @@ class ItemTransporter:
     pass
 
 
-def get_item_info(keys: list, cell_coord: list) -> dict:
-    pyautogui.moveTo(cell_coord)
-    time.sleep(.035)
-
-    item_info = {}
-
-    item_info_text = get_item_info_text_from_clipboard()
-    if not item_info_text:
-        return item_info
-
-    item_info_parts = [[line for line in part.split('\r\n') if line] for part in item_info_text.split('--------')]
-
-    for key in keys:
-        value = find_item_info_by_key(item_info_parts, key)
-        item_info.update({key: value})
-
-    return item_info
-
-
-def get_item_info_text_from_clipboard():
-    pyperclip.copy("")
-    time.sleep(.015)
-    keyboard.send(['ctrl', 46])  # ctrl+c (англ.)
-    time.sleep(.035)
-    item_info_text = pyperclip.paste()
-
-    return item_info_text
-
-
 def find_item_info_by_key(item_info_parts, key):
 
     def get_value_after_startswith(startswith, default_value):
@@ -1048,14 +1110,17 @@ def find_item_info_by_key(item_info_parts, key):
     elif key == 'ilvl':
         value = get_value_after_startswith("Item Level: ", "")
     elif key == 'item_name':
-        rarity = find_item_info_by_key(item_info_parts, 'rarity')
-
-        # Для уников название в 1 части ровно в 3 строке из 4,
-        #  а для других - в последней (3 или 4, в зависимости от рарности)
-        if rarity == "Unique":
-            value = item_info_parts[0][2]
-        else:
-            value = item_info_parts[0][-1]
+        # rarity = find_item_info_by_key(item_info_parts, 'rarity')
+        #
+        # # Для уников название в 1 части ровно в 3 строке из 4,
+        # #  а для других - в последней (3 или 4, в зависимости от рарности)
+        # if rarity == "Unique":
+        #     value = item_info_parts[0][2]
+        # else:
+        #     value = item_info_parts[0][-1]
+        value = item_info_parts[0][2]
+        if len(item_info_parts[0]) == 4:
+            value += " " + item_info_parts[0][3]
 
     else:
         raise KeyError(f"Для ключа '{key}' не указан алгоритм получения информации по предмету")

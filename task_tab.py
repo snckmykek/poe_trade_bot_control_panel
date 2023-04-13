@@ -104,7 +104,7 @@ class TaskBox(MDCard, CommonElevationBehavior, ButtonBehavior):
             return
 
         if is_active:
-            Clock.schedule_once(lambda *_: app.start_by_task((self.index, 0)), 1)
+            Clock.schedule_once(lambda *_: app.start_by_task((self.index, 0)), 5)
         else:
             app.need_stop_task = True
 

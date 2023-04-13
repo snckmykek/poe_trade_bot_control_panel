@@ -2,9 +2,11 @@ import traceback
 from datetime import datetime
 import os
 from dataclasses import dataclass
+from textwrap import dedent
 from typing import Literal
 
 from imutils.object_detection import non_max_suppression
+from kivy.clock import Clock
 from kivy.event import EventDispatcher
 from kivy.properties import DictProperty
 from kivy.uix.widget import Widget
@@ -25,6 +27,7 @@ from win32api import GetSystemMetrics
 from common import resource_path, abs_path_near_exe
 from controllers import mouse_controller
 from errors import StopStepError, BotDevelopmentError, SettingsNotCompletedError
+from telegram import send_message_to_telegram
 
 dwmapi = ctypes.WinDLL("dwmapi")
 pyautogui.FAILSAFE = False  # Прекращает работу при наведении в левый верхний угол (если надо прекратить ошибочный код)
@@ -170,6 +173,21 @@ class Bot(EventDispatcher):
                     name="Дополнительная задержка после действий мыши и клавиатуры (ms)",
                     type='int'
                 ),
+                Simple(
+                    key='telegram_bot_token',
+                    name="Токен бота, от чьего имени будет отправляться сообщение в чаты (должен быть админом в чате)",
+                    type='str'
+                ),
+                Simple(
+                    key='telegram_chat_ids',
+                    name="Список ID чатов телеграм через запятую, для рассылки ошибок бота",
+                    type='str'
+                ),
+                Simple(
+                    key='user_name',
+                    name="Имя пользователя (Используется при рассылке в телегу об ошибках)",
+                    type='str'
+                ),
             ]
         }
 
@@ -180,14 +198,19 @@ class Bot(EventDispatcher):
     def execute_step(self, task_number, step_number):
 
         result = {'error': "", 'error_details': "", 'goto': None}
+        critical_error = False
 
         step = self.get_step(task_number, step_number)
 
         self.set_empty_log()
 
         try:
-            self.check_freeze()
+            if self.app.stage_started_manually:
+                self.on_stage_started_manually()
+
             step['func']()
+            if step.get('on_complete') and step['on_complete'].get('func'):
+                step['on_complete']['func'](result)
 
         except StopStepError as e:
             result['error'] = str(e)
@@ -195,14 +218,37 @@ class Bot(EventDispatcher):
 
             if step.get('on_error') and step['on_error'].get('goto'):
                 result['goto'] = step['on_error'].get('goto')
+            else:
+                critical_error = True  # В этапе не указан шаг при невыполнении шага, бот встал
+
+            if step.get('on_error') and step['on_error'].get('func'):
+                try:
+                    step['on_error']['func'](result)
+                except Exception as e:
+                    critical_error = True
+                    result['error'] = str(e)
+                    result['error_details'] = traceback.format_exc()
 
         except Exception as e:
+            critical_error = True
             result['error'] = str(e)
             result['error_details'] = traceback.format_exc()
-            self.update_log(details=result['error_details'], level=1, text=result['error'])
-            self.save_log()
+
+        if critical_error:
+            self.send_message_to_telegram(self.error_msg_for_telegram(step['name'], result))
 
         return result
+
+    def error_msg_for_telegram(self, stage_name, result):
+        return dedent("""\
+            Пользователь: '{}'. Бот: '{}'
+            Этап: ''. Ошибка: {}
+            Подробнее:
+            {}""".format(self.v('user_name'), self.name, {stage_name}, result['error'], result['error_details']))
+
+    def on_stage_started_manually(self):
+        """Переназначить для каждого бота, если нужно"""
+        pass
 
     def get_task(self, task_number):
         try:
@@ -351,7 +397,7 @@ class Bot(EventDispatcher):
         time.sleep(.015 + sleep_after + self.v('button_delay_ms') / 1000)
 
     def _mouse_click(self, x=None, y=None, sleep_after=.0, clicks=1, interval=.0):
-        pyautogui.click(x, y, clicks=clicks, interval=interval)
+        pyautogui.click(x, y, clicks=clicks, interval=interval + self.v('button_delay_ms') / 1000)
         time.sleep(.015 + sleep_after + self.v('button_delay_ms') / 1000)
 
     def key_down(self, key, sleep_after=.0):
@@ -445,7 +491,7 @@ class Bot(EventDispatcher):
             координат всех найденных шаблонов (с учетом очистки от наложения, то есть в отдельных областях),
         :param region: Область для скриншота в глобальных координатах в пикселях,
         :param template: строка или словарь как в Template.value()
-        :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.89,
+        :param accuracy: Точность совпадения шаблона (от 0 до 1), оптимально 0.7,
         :return: [x, y, w, h] (x,y - левый верхний угол совпадения шаблона, w, h - ширина и высота шаблона)
         """
         self.check_freeze()
@@ -484,7 +530,7 @@ class Bot(EventDispatcher):
         if not accuracy:
             accuracy = template['normalized_accuracy']
 
-        matches = cv2.matchTemplate(img, template_gray, cv2.TM_CCORR_NORMED, mask=mask)
+        matches = cv2.matchTemplate(img, template_gray, cv2.TM_CCOEFF_NORMED, mask=mask)
 
         # При использовании маски значения могут быть 'бесконечность', отсекаем
         matches[np.isnan(matches)] = 0
@@ -525,6 +571,12 @@ class Bot(EventDispatcher):
                 raise StopStepError(f"Не найден шаблон '{self._variables[template_name].name}'")
             else:
                 time.sleep(.5)
+
+    def click_to_template_with_condition(self, template_name, condition_template_name):
+        while not self.find_template(condition_template_name):
+            self.check_freeze()
+
+            self.click_to(template_name)
 
     # region Шаблоны
 
@@ -575,15 +627,7 @@ class Bot(EventDispatcher):
         # Редактирование точности (алгоритм поиска: светлые картинки на светлом фоне выделяет сильнее)
         # Все пиксели, кроме пустых (они будут вырезаны маской) и черных (так уж получилось, но это не влияет)
         if accuracy is None:
-            accuracy = .85
-
-        avg_value = np.average(template[template != 0])
-        if avg_value < 40:
-            accuracy -= .03
-        elif avg_value > 100:
-            accuracy += .03
-        else:
-            accuracy += (avg_value - 70) / 1000
+            accuracy = .6
 
         return accuracy
 
@@ -606,6 +650,22 @@ class Bot(EventDispatcher):
         win32gui.EnumWindows(_callback, None)
 
     # endregion
+
+    # region Управление потоками
+
+    def need_stop_threads(self):
+        return self.app.need_break or self.app.bot != self
+
+    # endregion
+
+    def send_message_to_telegram(self, message):
+        try:
+            Clock.schedule_once(lambda *_: send_message_to_telegram(
+                self.v('telegram_bot_token'), self.v('telegram_chat_ids').split(','), message))
+        except Exception as e:
+            self.print_log(f"Ошибка отправки в телеграм: {e}\n"
+                           f"Подробнее:\n"
+                           f"{traceback.format_exc()}")
 
 
 # region Окна

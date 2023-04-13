@@ -67,9 +67,13 @@ class Items(MDBoxLayout):
 
     def save(self, *args):
         def values_is_correct(item):
-            return (text_is_correct(item.ids.max_price.text_type, item.ids.max_price.text)
-                    and text_is_correct(item.ids.max_price.text_type, item.ids.bulk_price.text)
-                    and text_is_correct(item.ids.max_price.text_type, item.ids.qty.text))
+            return (
+                text_is_correct(item.ids.max_price.text_type, item.ids.max_price.text)
+                and text_is_correct(item.ids.bulk_price.text_type, item.ids.bulk_price.text)
+                and text_is_correct(item.ids.max_price_d.text_type, item.ids.max_price_d.text)
+                and text_is_correct(item.ids.bulk_price_d.text_type, item.ids.bulk_price_d.text)
+                and text_is_correct(item.ids.qty.text_type, item.ids.qty.text)
+            )
 
         errors = [item.name for item in self.ids.items_box.children if not values_is_correct(item)]
 
@@ -81,6 +85,8 @@ class Items(MDBoxLayout):
                   item.ids.use.active,
                   float(item.ids.max_price.text) if item.ids.max_price.text else item.max_price,
                   float(item.ids.bulk_price.text) if item.ids.bulk_price.text else item.bulk_price,
+                  float(item.ids.max_price_d.text) if item.ids.max_price_d.text else item.max_price_d,
+                  float(item.ids.bulk_price_d.text) if item.ids.bulk_price_d.text else item.bulk_price_d,
                   int(item.ids.qty.text) if item.ids.qty.text else item.qty,
                   )
                  for item in self.ids.items_box.children]
@@ -104,6 +110,8 @@ class Items(MDBoxLayout):
                     icon_func=self.delete_row,
                     bulk_price=item_setting['bulk_price'],
                     max_price=item_setting['max_price'],
+                    bulk_price_d=item_setting['bulk_price_d'],
+                    max_price_d=item_setting['max_price_d'],
                     qty=item_setting['max_qty'],
                     use=item_setting['use'],
                 )
@@ -256,10 +264,12 @@ class ItemSelector(MDBoxLayout):
 
 class ItemRow(MDBoxLayout):
     bulk_price = NumericProperty(0)
+    bulk_price_d = NumericProperty(0)
     icon_func = ObjectProperty()
     name = StringProperty()
     item = StringProperty()
     max_price = NumericProperty(0)
+    max_price_d = NumericProperty(0)
     qty = NumericProperty(0)
     use = BooleanProperty(False)
     image = StringProperty()

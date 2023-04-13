@@ -24,7 +24,6 @@ from kivy.clock import Clock
 
 from bots.bot import Coord, Simple, Template, get_window_param, to_global
 from bots.common import CustomDialog, DealPOETrade
-from bots.poe.poe_base import get_item_info
 from bots.poe.poe_base import PoeBase
 from bots.poe.buyer.db_requests import Database
 from bots.poe.buyer.additional_functional import Content, Items, Blacklist
@@ -116,7 +115,7 @@ class PoeBuyer(PoeBase):
             },
             {
                 'name': "Запуск потока ПОЕ трейд и подготовка к торговле",
-                'timer': 20,
+                'timer': 60,
                 'available_mode': 'after_start',
                 'stages': [
                     {
@@ -130,7 +129,7 @@ class PoeBuyer(PoeBase):
                 ]
             },
             {
-                'name': "Назначение сделки",
+                'name': "Ждать инфу по сделкам",
                 'timer': 60,
                 'available_mode': 'always',
                 'stages': [
@@ -139,6 +138,13 @@ class PoeBuyer(PoeBase):
                         'on_error': {'goto': (2, 0)},
                         'name': "Ждать информацию по валюте и очередь сделок"
                     },
+                ]
+            },
+            {
+                'name': "Назначение сделки",
+                'timer': 60,
+                'available_mode': 'always',
+                'stages': [
                     {
                         'func': self.prepare_service,
                         'name': "Подготовка служебных данных"
@@ -163,12 +169,12 @@ class PoeBuyer(PoeBase):
                     },
                     {
                         'func': self.wait_party,
-                        'on_error': {'func': lambda x: self.save_current_deal_result(x, 'skipped'), 'goto': (2, 2)},
+                        'on_error': {'func': lambda x: self.save_current_deal_result(x, 'skipped'), 'goto': (3, 1)},
                         'name': "Ждать пати"
                     },
                     {
                         'func': self.teleport,
-                        'on_error': {'goto': (2, 4)},
+                        'on_error': {'goto': (3, 3)},
                         'name': "ТП в хайдаут продавца"
                     },
                 ]
@@ -186,12 +192,12 @@ class PoeBuyer(PoeBase):
                     {
                         'func': self.put_currency,
                         'name': "Положить валюту",
-                        'on_error': {'goto': (3, 0)}
+                        'on_error': {'goto': (4, 0)}
                     },
                     {
                         'func': self.check_items,
                         'name': "Проверить итемы",
-                        'on_error': {'goto': (3, 0)}
+                        'on_error': {'goto': (4, 0)}
                     },
                     {
                         'func': self.set_complete_trade,
@@ -206,7 +212,7 @@ class PoeBuyer(PoeBase):
                 'stages': [
                     {
                         'func': self.wait_confirm,
-                        'on_error': {'goto': (3, 0)},
+                        'on_error': {'goto': (4, 0)},
                         'name': "Дождаться завершения трейда",
                         'on_complete': {'func': lambda x: self.save_current_deal_result(x, 'completed')}
                     },
@@ -321,6 +327,21 @@ class PoeBuyer(PoeBase):
                     name="Дополнительная задержка после действий мыши и клавиатуры (ms)",
                     type='int'
                 ),
+                Simple(
+                    key='telegram_bot_token',
+                    name="Токен бота, от чьего имени будет отправляться сообщение в чаты (должен быть админом в чате)",
+                    type='str'
+                ),
+                Simple(
+                    key='telegram_chat_ids',
+                    name="Список ID чатов телеграм через запятую, для рассылки ошибок бота",
+                    type='str'
+                ),
+                Simple(
+                    key='user_name',
+                    name="Имя пользователя (Используется при рассылке в телегу об ошибках)",
+                    type='str'
+                ),
             ],
             'Окно: раб. стол': [
                 Template(
@@ -419,8 +440,8 @@ class PoeBuyer(PoeBase):
                 ),
                 Template(
                     key='template_game_loaded',
-                    name=
-                    "Статичный кусок экрана, однозначно говорящий о загрузке локи (например, сиськи телки где мана)",
+                    name="Статичный кусок экрана, "
+                         "однозначно говорящий о загрузке локи (например, сиськи телки где мана)",
                     region=Coord(
                         key='region_game_loaded',
                         name="",
@@ -661,35 +682,8 @@ class PoeBuyer(PoeBase):
         print(f"Заглушка: {self.app.current_task}, {self.app.current_stage}")
         time.sleep(1)
 
-    def execute_step(self, task_number, step_number):
-
-        result = {'error': "", 'error_details': "", 'goto': None}
-
-        step = self.get_step(task_number, step_number)
-
-        self.set_empty_log()
-
-        try:
-            if self.app.stage_started_manually:
-                self.need_update_swag = True
-
-            step['func']()
-            if step.get('on_complete') and step['on_complete'].get('func'):
-                step['on_complete']['func'](result)
-
-        except StopStepError as e:
-            result['error'] = str(e)
-            result['error_details'] = traceback.format_exc()
-            if step.get('on_error') and step['on_error'].get('goto'):
-                result['goto'] = step['on_error'].get('goto')
-            if step.get('on_error') and step['on_error'].get('func'):
-                step['on_error']['func'](result)
-
-        except Exception as e:
-            result['error'] = str(e)
-            result['error_details'] = traceback.format_exc()
-
-        return result
+    def on_stage_started_manually(self):
+        self.need_update_swag = True
 
     # region Продажа. Запросы на ПОЕ трейд
     def start_poe_trade(self):
@@ -698,10 +692,12 @@ class PoeBuyer(PoeBase):
             self.trade_thread.start()
 
     def poetrade_loop(self):
-        self.update_divine_price()
+
+        while not self.currencies_price_is_updated():
+            time.sleep(5)
 
         while True:
-            if self.app.need_break:
+            if self.need_stop_threads():
                 return
 
             _start = datetime.now()
@@ -717,9 +713,19 @@ class PoeBuyer(PoeBase):
             if _interval > 0:
                 time.sleep(_interval)
 
-    def update_divine_price(self):
+    def currencies_price_is_updated(self):
+        try:
+            self.update_currency_price()
+        except Exception as e:
+            self.print_log(f"Ошибка получения валюты: {e}\n")
+            return False
+
+        return True
+
+    def update_currency_price(self):
+
         # Цена дивайна для конвертации дивайна в хаосы
-        divine_deals = self.get_deals(("chaos",), ("divine",))
+        divine_deals = self.get_deals({'divine': ["chaos", ]})
         prices = [deal.item_min_qty / deal.currency_min_qty for deal in divine_deals]
         avg = sum(prices) / len(prices)
 
@@ -733,7 +739,7 @@ class PoeBuyer(PoeBase):
         self.divine_price = round(sum(prices) / len(prices))
 
         # Цена хаоса для конвертации хаосов в диваны
-        chaos_deals = self.get_deals(("divine",), ("chaos",))
+        chaos_deals = self.get_deals({'chaos': ["divine", ]})
         prices = [deal.item_min_qty / deal.currency_min_qty for deal in chaos_deals]
         avg = sum(prices) / len(prices)
 
@@ -747,7 +753,9 @@ class PoeBuyer(PoeBase):
         self.chaos_price = sum(prices) / len(prices)
 
     def get_current_order(self):
-        items_i_want = [
+        items_settings = self.db.get_items()
+
+        order = {'chaos': [
             {
                 'item': item_settings['item'],
                 'name': item_settings['name'],
@@ -755,32 +763,48 @@ class PoeBuyer(PoeBase):
                 'bulk_price': item_settings['bulk_price'],
                 'image': item_settings['image'],
                 'max_qty': item_settings['max_qty']
-            } for item_settings in self.db.get_items()
+            } for item_settings in items_settings
             if (
                     item_settings['use'] and item_settings['max_price']
                     and item_settings['bulk_price'] and item_settings['max_qty']
             )
-        ]
+        ], 'divine': [
+            {
+                'item': item_settings['item'],
+                'name': item_settings['name'],
+                'max_price': item_settings['max_price_d'],
+                'bulk_price': item_settings['bulk_price_d'],
+                'image': item_settings['image'],
+                'max_qty': item_settings['max_qty']
+            } for item_settings in items_settings
+            if (
+                    item_settings['use'] and item_settings['max_price_d']
+                    and item_settings['bulk_price_d'] and item_settings['max_qty']
+            )
+        ]}
 
-        return items_i_want
+        return order
 
     def update_items_left(self, current_order):
+        _counted_items = []
         items_left = 0
-        for item in current_order:
-            items_left += item['max_qty']
+        for items_i_want in current_order.values():
+            for item in items_i_want:
+                if item['name'] in _counted_items:
+                    continue
+
+                _counted_items.append(item['name'])
+                items_left += item['max_qty']
 
         self.items_left = items_left
 
-    def update_offer_list(self, items_i_want):
+    def update_offer_list(self, order):
 
-        if len(items_i_want) == 0:
-            return
-
-        self.deals = self.get_deals(items_i_want, ("chaos",), deal_sort_type=self.deal_sort_type)
+        self.deals = self.get_deals(order, deal_sort_type=self.deal_sort_type)
 
         self.print_log("Сделки обновлены")
 
-    def get_deals(self, items_i_want, items_i_have, min_stock=1, qty_deals=30,
+    def get_deals(self, order, min_stock=1, qty_deals=30,
                   deal_sort_type: Literal['profit_per_each', 'profit'] = 'profit_per_each'):
         """
         sort_type. Обычно profit_per_each используется, когда порог закупа (макс прайс) стоит достаточно высокий, и
@@ -830,9 +854,9 @@ class PoeBuyer(PoeBase):
         url = fr"https://www.pathofexile.com/api/trade/exchange/{league}"
 
         _last_poe_trade_request = time.time()
-        for item_i_want in items_i_want:
-            simple_item = isinstance(item_i_want, str)
-            for item_i_have in items_i_have:
+        for item_i_have, items_i_want in order.items():
+            for item_i_want in items_i_want:
+                simple_item = isinstance(item_i_want, str)
 
                 # Запрос поиска
                 data = {
@@ -915,17 +939,14 @@ class PoeBuyer(PoeBase):
                     deal.item_whisper = offer_info['item']['whisper']
                     deal.whisper_template = deal_info['listing']['whisper']
 
-                    deal.c_price = deal.currency_min_qty / deal.item_min_qty * (
-                        self.chaos_price if deal.currency == 'divine' else 1)
+                    deal.price_for_each = deal.currency_min_qty / deal.item_min_qty
                     if not simple_item:
-                        deal.profit_per_each = math.floor(
-                            (item_i_want['bulk_price'] - deal.c_price)
-                        )
-                        deal.profit = deal.profit_per_each * deal.item_stock
+                        deal.profit_per_each = round(item_i_want['bulk_price'] - deal.price_for_each, 3)
+                        deal.profit = round(deal.profit_per_each * deal.item_stock, 3)
                         deal.image = item_i_want['image']
                         deal.item_name = item_i_want['name']
 
-                    if simple_item or deal.c_price <= item_i_want['max_price']:
+                    if simple_item or deal.price_for_each <= item_i_want['max_price']:
                         deals.append(deal)
 
         if deal_sort_type == 'profit_per_each':
@@ -983,20 +1004,22 @@ class PoeBuyer(PoeBase):
         if not self.need_update_swag:
             return
 
+        self.clear_inventory()
+
         chaos_qty = 0
         divine_qty = 0
         current_chaos_coord = None
-        while not chaos_qty or not divine_qty:
+        while (not chaos_qty and self.v('min_chaos')) or (not divine_qty and self.v('min_divine')):
             self.try_to_open_currency_tab()
 
-            divine_info = get_item_info(['item_name', 'quantity'], self.v('coord_divine'))
+            divine_info = self.get_item_info_by_ctrl_c(['item_name', 'quantity'], self.v('coord_divine'))
             if 'divine' in divine_info.get('item_name', "").lower():
                 divine_qty = divine_info.get('quantity', 0)
 
             chaos_qty = 0
             _min_chaos_qty = 5001
             for chaos_coord in self.v('coord_chaos'):
-                chaos_info = get_item_info(['item_name', 'quantity'], chaos_coord)
+                chaos_info = self.get_item_info_by_ctrl_c(['item_name', 'quantity'], chaos_coord)
                 if 'chaos' in chaos_info.get('item_name', "").lower():
                     _chaos_qty = chaos_info.get('quantity', 0)
                     chaos_qty += _chaos_qty
@@ -1018,7 +1041,7 @@ class PoeBuyer(PoeBase):
         if not self.deals and not self.in_own_hideout:
             self.go_home()
 
-        while self.swag['chaos'] == 0 and self.swag['divine'] == 0:
+        while (self.swag['chaos'] == 0 and self.v('min_chaos')) and (self.swag['divine'] == 0 and self.v('min_divine')):
             if self.stop():
                 raise StopStepError("Не дождался инфы о валюте в стеше")
 
@@ -1062,7 +1085,10 @@ class PoeBuyer(PoeBase):
         except IndexError:
             raise StopStepError("Список сделок пуст")
 
-        available_c = self.swag['chaos'] + self.swag['divine'] * self.chaos_price
+        if current_deal.currency == "chaos":
+            available_currency = self.swag['chaos'] + self.swag['divine'] * self.divine_price
+        else:
+            available_currency = self.swag['divine'] + self.swag['chaos'] * self.chaos_price
 
         items_settings = self.db.get_items(current_deal.item)
         qty_left = items_settings[0]['max_qty'] if items_settings else 0
@@ -1075,15 +1101,20 @@ class PoeBuyer(PoeBase):
         currency_amount = 0
         while item_amount + current_deal.item_min_qty <= qty_left \
                 and item_amount + current_deal.item_min_qty <= current_deal.item_stock \
-                and currency_amount + current_deal.currency_min_qty <= available_c:
+                and currency_amount + current_deal.currency_min_qty <= available_currency:
             item_amount += current_deal.item_min_qty
             currency_amount += current_deal.currency_min_qty
 
         if item_amount == 0:
             raise StopStepError(f"Количество для покупки: 0. ID сделки: {current_deal.id}")
 
-        current_deal.divine_qty = currency_amount // self.divine_price
-        current_deal.chaos_qty = currency_amount % self.divine_price
+        if current_deal.currency == "chaos":
+            current_deal.divine_qty = currency_amount // self.divine_price
+            current_deal.chaos_qty = currency_amount % self.divine_price
+        else:
+            frac_divine, int_divine = math.modf(currency_amount)
+            current_deal.divine_qty = int(int_divine)
+            current_deal.chaos_qty = round(frac_divine / self.chaos_price)
 
         if self.swag['chaos'] < current_deal.chaos_qty or self.swag['divine'] < current_deal.divine_qty:
             raise StopStepError(f"Недостаточно валюты. Нужно/всего: "
@@ -1139,11 +1170,11 @@ class PoeBuyer(PoeBase):
 
         # Пока выкладываем каждый раз тупа всё из инвентаря и скрином проверяем, что всё ок
         self.clear_inventory()
-
+        self.try_to_open_currency_tab()
         self.update_swag_if_necessary()
 
         self.from_stash_to_inventory(self.current_deal.divine_qty, 'divine', 10, self.swag['divine'])
-        self.from_stash_to_inventory(self.current_deal.chaos_qty, 'chaos', 10, self.swag['chaos'])
+        self.from_stash_to_inventory(self.current_deal.chaos_qty, 'chaos', 20, self.swag['chaos'])
 
     # Временно использую clear_inventory
     def from_inventory_to_stash(self):
@@ -1216,7 +1247,7 @@ class PoeBuyer(PoeBase):
 
         self.virtual_inventory.empty_cell(*last_cell_coord)
 
-    def put_remainder(self, inv_region, item, qty):
+    def put_remainder(self, inv_region, item, qty, item_size=None):
 
         if qty == 0:
             return
@@ -1281,7 +1312,7 @@ class PoeBuyer(PoeBase):
                     self.mouse_move(*cell_coords, sleep_after=.15)
                     self.mouse_click(sleep_after=.15)
 
-            counted = self.get_items_qty_in_cell(cell_coords)
+            _, counted = self.get_item_and_qty_in_cell(cell_coords)
 
             attempt += 1
 
@@ -1320,7 +1351,7 @@ class PoeBuyer(PoeBase):
                 raise StopStepError("Не смог выложить валюту из стеша")
 
     # Временно вместо недописанной change_whole_part_in_inventory
-    def put_whole_part_in_inventory(self, inv_region, item, stack_size, whole_part_qty):
+    def put_whole_part_in_inventory(self, inv_region, item, stack_size, whole_part_qty, item_size=None):
 
         if whole_part_qty == 0:
             return
@@ -1396,10 +1427,10 @@ class PoeBuyer(PoeBase):
     def get_item_coord_and_qty(self, item):
         item_coord = self.get_item_coord(item)
 
-        item_qty_in_cell = self.get_items_qty_in_cell(item_coord, item_name=item)
+        _, item_qty_in_cell = self.get_item_and_qty_in_cell(item_coord)
         while not item_qty_in_cell:
             self.try_to_open_currency_tab()
-            item_qty_in_cell = self.get_items_qty_in_cell(item_coord, item_name=item)
+            _, item_qty_in_cell = self.get_item_and_qty_in_cell(item_coord)
 
             if self.stop():
                 raise StopStepError("Не смог открыть валютную вкладку")
@@ -1409,17 +1440,6 @@ class PoeBuyer(PoeBase):
     def close_x_tabs(self):
         self.click_to('template_x_button', wait_template=False)
         time.sleep(1)
-
-    def get_items_qty_in_cell(self, cell_coords, item_name=""):
-        with mouse_controller:
-            item_info = get_item_info(['quantity', 'item_name'], cell_coords)
-
-        qty = 0
-        item_name_from_clipboard = item_info.get('item_name', "")
-        if not item_name or item_name.lower() in item_name_from_clipboard.lower():
-            qty = item_info.get('quantity', 0)
-
-        return qty
 
     @staticmethod
     def cell_coords_by_position(inv_region, col, row):
@@ -1447,6 +1467,9 @@ class PoeBuyer(PoeBase):
         template_accept = self.v('template_accept')
 
         while True:
+            if self.need_stop_threads():
+                return
+
             if not self.party_accepted:
                 self.check_freeze()
 
@@ -1465,19 +1488,20 @@ class PoeBuyer(PoeBase):
             time.sleep(.5)
 
     def add_changed_deal_and_skip_current(self):
+        # TODO: не учитывать ник, очищать во всем оте client.txt после прочтения
         # Если продавец пишет "3 left", "have 3", то добавляем в список на 1 место новую сделку, эту скипаем
-        new_deal_qty = math.floor(
-            self.new_deal_qty() / self.current_deal.item_min_qty) * self.current_deal.item_min_qty
-
-        if new_deal_qty:
-            self.current_deal.item_stock = new_deal_qty
-            self.current_deal.profit = self.current_deal.profit_per_each * new_deal_qty
-
-            self.deals.insert(0, self.current_deal)
-            self.whispers_history.pop(self.current_deal.character_name)
-            self.clear_logs()
-
-            return True
+        # new_deal_qty = math.floor(
+        #     self.new_deal_qty() / self.current_deal.item_min_qty) * self.current_deal.item_min_qty
+        #
+        # if new_deal_qty:
+        #     self.current_deal.item_stock = new_deal_qty
+        #     self.current_deal.profit = self.current_deal.profit_per_each * new_deal_qty
+        #
+        #     self.deals.insert(0, self.current_deal)
+        #     self.whispers_history.pop(self.current_deal.character_name)
+        #     self.clear_logs()
+        #
+        #     return True
 
         return False
 
@@ -1529,6 +1553,15 @@ class PoeBuyer(PoeBase):
 
         return False
 
+    def get_item_size(self, item):
+        if item == 'Prime Chaotic Resonator':
+            return {'w': 2, 'h': 2}
+        #
+        # if 'chaos' in item.lower() or 'divine' in item.lower():
+        #     return {'w': 1, 'h': 1}
+
+        return {'w': 1, 'h': 1}
+
     # endregion
 
     # region Продажа. Сделка
@@ -1562,18 +1595,18 @@ class PoeBuyer(PoeBase):
             if not self.find_template('template_trade'):
                 raise StopStepError("Трейд закрылся до завершения")
 
-            qty = self.count_items(region, self.current_deal.item_name)
+            qty = self.count_items(region, accuracy=.5).get(self.current_deal.item_name, 0)
 
             if self.stop():
                 raise StopStepError(
                     f"Неверное количество предметов для сделки {qty} (нужно {self.current_deal.item_qty})")
 
     def set_complete_trade(self):
-        if self.find_template('template_cancel_complete_trade', accuracy=.8):
+        if self.find_template('template_cancel_complete_trade'):
             # Уже нажата кнопка (т.к. вместо нее появилась кнопка отмены трейда)
             return
 
-        self.click_to('template_complete_trade', accuracy=.8)
+        self.click_to('template_complete_trade')
 
     # endregion
 
@@ -1660,7 +1693,7 @@ class PoeBuyer(PoeBase):
             result['error'],  # error
             self.current_deal.item,
             self.current_deal.item_qty,
-            self.current_deal.c_price,
+            self.current_deal.price_for_each,
             self.current_deal.profit,  # profit
             int(datetime.now().timestamp()) - self.start_deal_timestamp  # deal_time
         ])

@@ -40,10 +40,10 @@ class DealPOETrade(dict):
     item_coords = [0, 0]
     image = ""
 
-    c_price = 0
-    profit_per_each = 0
-    profit = 0
-    whisper = ""
+    price_for_each: float = .0
+    profit_per_each: float = .0
+    profit: float = .0
+    whisper: str = ""
 
     received_currency: dict = None
     added_timestamp: int = 0

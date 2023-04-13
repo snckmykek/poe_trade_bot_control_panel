@@ -8,6 +8,7 @@ import time
 import traceback
 from datetime import datetime
 from operator import itemgetter
+from textwrap import dedent
 
 import keyboard as keyboard
 import pyautogui
@@ -32,12 +33,13 @@ from errors import StopStepError, SettingsNotCompletedError, BotDevelopmentError
 
 class PoeSeller(PoeBase):
     # Обязательные
-    icon = 'account-arrow-left'
+    icon = 'account-arrow-right'
     name = "ПОЕ: Продавец"
     key = "poe_seller"
 
     # Кастомные
     STASH_CELL_SIZE: float = 47.2
+    MAX_TRADE_INVITE_NUMBER: int = 5
     cancel_any_requests_thread: threading.Thread = None
     characters_in_area = ListProperty([])
     current_deal: DealPOETrade = DealPOETrade()
@@ -48,6 +50,7 @@ class PoeSeller(PoeBase):
     deals = ListProperty([])
     trade_chat_thread: threading.Thread = None
     trade_state: str = 'not_finished'  # cancelled, accepted
+    trade_invite_number: int = 0
     start_deal_timestamp: int = 0
 
     # region init
@@ -110,7 +113,7 @@ class PoeSeller(PoeBase):
                 ]
             },
             {
-                'name': "Подготовка к сделке",
+                'name': "Ожидание сделок",
                 'timer': 60,
                 'available_mode': 'always',
                 'stages': [
@@ -119,6 +122,13 @@ class PoeSeller(PoeBase):
                         'on_error': {'goto': (2, 0)},
                         'name': "Ожидание сделок"
                     },
+                ]
+            },
+            {
+                'name': "Подготовка к сделке",
+                'timer': 60,
+                'available_mode': 'always',
+                'stages': [
                     {
                         'func': self.prepare_service,
                         'name': "Подготовка служебных данных"
@@ -148,12 +158,12 @@ class PoeSeller(PoeBase):
                     {
                         'func': self.put_items,
                         'name': "Выложить товар",
-                        'on_error': {'goto': (3, 0)}
+                        'on_error': {'goto': (4, 0)}
                     },
                     {
                         'func': self.check_currency,
                         'name': "Проверить валюту",
-                        'on_error': {'goto': (3, 0)}
+                        'on_error': {'goto': (4, 0)}
                     },
                     {
                         'func': self.set_complete_trade,
@@ -163,17 +173,18 @@ class PoeSeller(PoeBase):
             },
             {
                 'name': "Дождаться завершения трейда",
-                'timer': 15,
+                'timer': 10,
                 'available_mode': 'always',
                 'stages': [
                     {
                         'func': self.wait_confirm,
-                        'on_error': {'goto': (3, 0)},
+                        'on_error': {'goto': (4, 0)},
                         'name': "Дождаться завершения трейда",
                         'on_complete': {'func': lambda result: self.save_current_deal_result(result, 'completed')}
                     },
                     {
                         'func': self.on_complete_trade,
+                        'on_error': {'goto': (5, 0)},
                         'name': "Действия после трейда"
                     },
                 ]
@@ -263,6 +274,21 @@ class PoeSeller(PoeBase):
                     key='deal_lifetime',
                     name="Сколько сделка будет висеть в списке (в сек)",
                     type='int'
+                ),
+                Simple(
+                    key='telegram_bot_token',
+                    name="Токен бота, от чьего имени будет отправляться сообщение в чаты (должен быть админом в чате)",
+                    type='str'
+                ),
+                Simple(
+                    key='telegram_chat_ids',
+                    name="Список ID чатов телеграм через запятую, для рассылки ошибок бота",
+                    type='str'
+                ),
+                Simple(
+                    key='user_name',
+                    name="Имя пользователя (Используется при рассылке в телегу об ошибках)",
+                    type='str'
                 ),
             ],
             'Окно: Path of Exile (игра)': [
@@ -470,7 +496,6 @@ class PoeSeller(PoeBase):
             'main': {'name': ""},
             'poe': {'name': "Path of Exile", 'expression': ('x', 'y', 'w', 'h')},
             'poe_except_inventory': {'name': "Path of Exile", 'expression': ('x', 'y', 'int(w - 0.6166 * h)', 'h')}
-
         }
 
     def delayed_init(self, *_):
@@ -479,6 +504,9 @@ class PoeSeller(PoeBase):
         self.set_variables_setting()
 
     # endregion
+
+    def on_stage_started_manually(self):
+        self.clear_logs()
 
     # region Запуск потока анализа чата и подготовка к торговле
     def start_chat_thread(self):
@@ -490,7 +518,7 @@ class PoeSeller(PoeBase):
         self.update_currency_price()
 
         while True:
-            if self.app.need_break:
+            if self.need_stop_threads():
                 return
 
             self.check_freeze()
@@ -626,39 +654,57 @@ class PoeSeller(PoeBase):
 
     def parse_msg(self, line):
         character_name, msg = line.split("@From ")[1].split(': ', maxsplit=1)
+        character_name = self.character_name_without_clan(character_name)
 
         if self.is_trade_request(msg):
             self.add_deal_by_trade_request(character_name, msg)
         else:
             self.process_notrade_msg(character_name, msg)
 
+    def character_name_without_clan(self, character_name):
+        if ">" in character_name:
+            return character_name.split("> ")[1]
+        else:
+            return character_name
+
     def is_trade_request(self, msg):
         return "like to buy your " in msg
 
     def add_deal_by_trade_request(self, character_name, trade_request):
         if self.party_is_full():
+            self.print_log("Пати полное, сделка проигнорирована")
             return
 
+        deal_info = self.get_deal_info(character_name, trade_request)
+
+        self.add_deal(deal_info)
+
+        Clock.schedule_once(lambda *_: self.invite_party(deal_info['character_name']), random.randint(1, 2))
+
+        self.change_item_qty(deal_info['item_name'], -deal_info['item_qty'], deal_info['position'])
+
+    def get_deal_info(self, character_name, trade_request):
         deal_info = self.parse_trade_request(trade_request)
         deal_info.update({'character_name': character_name})
 
         if self.deal_already_added(deal_info):
+            self.print_log(f"Сделка с {character_name} уже в списке, кидаю пати еще раз")
             self.invite_party(character_name)
             return
 
-        item_info = self.get_item_info(deal_info['item_name'], deal_info['position'])
+        item_info = self.get_item_info_from_db(deal_info['item_name'], deal_info['position'])
 
         if self.wrong_price(deal_info, item_info):
+            self.print_log(f"Цена в виспере указана неверно по итему: {deal_info['item_name']}, пропускаю")
             return
 
         deal_info = self.precise_qty_deal_info(deal_info, item_info)
 
         if deal_info['item_qty'] == 0:
-            time.sleep(1)
-            self.send_to_chat(f"@{character_name} sold")
+            Clock.schedule_once(lambda *_: self.send_to_chat(f"@{character_name} sold"), 2)
             return
         elif deal_info['reply_whisper']:
-            time.sleep(1)
+            time.sleep(2)
             self.send_to_chat(deal_info['reply_whisper'])
 
         deal_info.update({'image': item_info['icon']})
@@ -666,8 +712,9 @@ class PoeSeller(PoeBase):
         deal_info.update({'item_stack_size': item_info['stack_size']})
         deal_info.update({'item_tab_number': item_info['tab_number']})
         deal_info.update({'item_coords': self.adapted_item_coords([item_info['x'], item_info['y']])})
+        deal_info.update({'item_info': item_info})
 
-        self.add_deal(deal_info, item_info)
+        return deal_info
 
     def adapted_item_coords(self, coords):
         _x = coords[0]
@@ -730,8 +777,13 @@ class PoeSeller(PoeBase):
 
         return False
 
-    def get_item_info(self, item_name, position):
+    def get_item_info_from_db(self, item_name, position):
         item_info_row = self.db.get_item_info(item_name, position)
+        if item_info_row is None:
+            error_message = f"Не найден предмет из запроса в чате: '{item_name}', pos: '{position}'"
+            self.send_message_to_telegram(error_message)
+            raise ValueError(error_message)
+
         item_info = dict(item_info_row)
 
         if not item_info['is_layout']:
@@ -747,13 +799,17 @@ class PoeSeller(PoeBase):
         return False
 
     def precise_qty_deal_info(self, deal_info, item_info):
-        if deal_info['item_qty'] <= item_info['qty'] and deal_info['item_qty'] % item_info['min_qty'] == 0:
+
+        max_qty = math.floor(12 / item_info['w']) * math.floor(5 / item_info['h']) * item_info['stack_size']
+
+        if deal_info['item_qty'] <= item_info['qty'] and deal_info['item_qty'] % item_info['min_qty'] == 0 \
+                and deal_info['item_qty'] < max_qty:
             return deal_info
 
-        qty_packages = \
-            math.floor(min(item_info['qty'], deal_info['item_qty']) // item_info['min_qty'])
-        qty = qty_packages * item_info['min_qty']
-        price = qty_packages * item_info['price_for_min_qty']
+        qty_packages = math.floor(min(item_info['qty'], deal_info['item_qty']) // item_info['min_qty'])
+        qty = math.floor(
+            min(qty_packages * item_info['min_qty'], max_qty // item_info['min_qty'] * item_info['min_qty']))
+        price = math.floor(qty / item_info['min_qty'] * item_info['price_for_min_qty'])
         currency = item_info['currency']
 
         deal_info['item_qty'] = qty
@@ -762,7 +818,7 @@ class PoeSeller(PoeBase):
 
         return deal_info
 
-    def add_deal(self, deal_info, item_info):
+    def add_deal(self, deal_info):
         deal = DealPOETrade()
         deal.character_name = deal_info['character_name']
         deal.currency = deal_info['currency']
@@ -784,12 +840,8 @@ class PoeSeller(PoeBase):
         deal.item_tab_number = deal_info['item_tab_number']
         deal.item_coords = deal_info['item_coords']
         deal.position = deal_info['position']
-        deal.item_info = item_info
+        deal.item_info = deal_info['item_info']
         deal.added_timestamp = int(datetime.now().timestamp())
-
-        self.invite_party(deal_info['character_name'])
-
-        self.change_item_qty(deal.item_name, -deal.item_qty, deal.position)
 
         self.deals.append(deal)
 
@@ -803,24 +855,36 @@ class PoeSeller(PoeBase):
             col, trade_request_remainder = trade_request_remainder.split(", top ")
             row = trade_request_remainder.split(")")[0]
 
-            return {'tab': tab, 'col': int(col), 'row': int(row)}
+            return {'tab': tab, 'col': int(col) - 1, 'row': int(row) - 1}
         else:
-            # Это недефолтная вкладка, позиция не указывается, она однозначна
+            # Это недефолтная (layout) вкладка, позиция не указывается, она однозначна
             return None
 
     def process_notrade_msg(self, character, msg):
-        # change 2d/div, offer, etc.. else отправить в телегу оповещение/записать лог о "странном" сообщении
-        pass
+        if "change" in msg.lower():
+            Clock.schedule_once(lambda *_: self.send_to_chat(f"@{character} have no change sry"), 2)
+        if "offer" in msg.lower():
+            Clock.schedule_once(lambda *_: self.send_to_chat(f"@{character} no offer sry"), 2)
+        if "ty" in msg.lower() or "t4t" in msg.lower():
+            pass
+        else:
+            pass
+            self.send_message_to_telegram(dedent("""\
+                Пользователь: '{}'. Бот: '{}'
+                Неопознанное сообщение от покупателя '{}':
+                {}""". format(self.v('user_name'), self.name, character, msg)))
 
     def character_joined_area(self, line):
-        character = line.split(" has joined the area")[0].split(" : ")[1]
-        self.characters_in_area.append(character)
+        character_name = line.split(" has joined the area")[0].split(" : ")[1]
+        character_name = self.character_name_without_clan(character_name)
+        self.characters_in_area.append(character_name)
 
     def character_left_area(self, line):
-        character = line.split(" has left the area")[0].split(" : ")[1]
+        character_name = line.split(" has left the area")[0].split(" : ")[1]
+        character_name = self.character_name_without_clan(character_name)
 
         try:
-            self.characters_in_area.remove(character)
+            self.characters_in_area.remove(character_name)
         except ValueError:
             pass
 
@@ -850,8 +914,13 @@ class PoeSeller(PoeBase):
             is_layout = False
             for key in tab.keys():
                 if "Layout" in key:
-                    is_layout = True
-                    self.save_cells_info(tab_number, key, tab[key]['layout'])
+                    try:
+                        self.save_cells_info(tab_number, key, tab[key]['layout'])
+                        is_layout = True
+                    except Exception as e:
+                        self.print_log("Ошибка при добавлении табы: {} - проигнорирована".format(
+                            ",".join(map(str, [tab_number, tab]))))
+                        return
 
             items = tab.get('items')
             self.save_items_in_tab(tab_number, items, is_layout)
@@ -865,7 +934,7 @@ class PoeSeller(PoeBase):
         self.db.save_cells_info(cells_info)
 
     def save_items_in_tab(self, tab_number, items, is_layout=False):
-        self.print_log(", ".join(map(str, [tab_number, items])))
+        self.print_log(", ".join(map(str, [tab_number, "Итемы сохранены"])))
         items_info = []
 
         tabs_names = self.v('tabs_names').split(",")
@@ -880,12 +949,13 @@ class PoeSeller(PoeBase):
                     if values:
                         qty, stack_size = map(int, values[0][0].split('/'))
 
-            price_for_min_qty, min_qty, currency = self.price_from_note(item.get('note'))
+            note = item.get('note', "")
+            price_for_min_qty, min_qty, currency = self.price_from_note(note)
 
             item_info = (
                 tab_number,
                 tabs_names[tab_number],
-                ",".join([str(item['x']), str(item['y'])]) if item['y'] else str(item['x']),
+                ",".join([str(item['x']), str(item['y'])]) if not is_layout else str(item['x']),
                 is_layout,
                 "",
                 item['name'] + (" " if item['name'] else "") + item['baseType'],
@@ -900,7 +970,8 @@ class PoeSeller(PoeBase):
                 price_for_min_qty,
                 currency,
                 item['identified'],
-                item['ilvl']
+                item['ilvl'],
+                note
             )
 
             items_info.append(item_info)
@@ -948,10 +1019,12 @@ class PoeSeller(PoeBase):
 
     def prepare_service(self):
 
+        self.trade_invite_number = 0
         self.start_deal_timestamp = int(datetime.now().timestamp())
 
         if not self.cancel_any_requests_thread or not self.cancel_any_requests_thread.is_alive():
-            self.cancel_any_requests_thread = threading.Thread(target=lambda *_: self.cancel_any_requests(), daemon=True)
+            self.cancel_any_requests_thread = threading.Thread(target=lambda *_: self.cancel_any_requests(),
+                                                               daemon=True)
             self.cancel_any_requests_thread.start()
 
     def set_current_deal(self):
@@ -984,8 +1057,9 @@ class PoeSeller(PoeBase):
 
         self.clear_inventory()
 
-        self.from_stash_to_inventory(self.current_deal.item_qty, self.current_deal.item_info['baseType'],
-                                     self.current_deal.item_stack_size, self.current_deal.item_stock)
+        self.from_stash_to_inventory(self.current_deal.item_qty, self.current_deal.item_name,
+                                     self.current_deal.item_stack_size, self.current_deal.item_stock,
+                                     item_size=(self.current_deal.item_info['h'], self.current_deal.item_info['w']))
 
     def get_item_coord_and_qty(self, item):
         item_coord = self.current_deal.item_coords
@@ -993,10 +1067,10 @@ class PoeSeller(PoeBase):
         tab_type = self.current_deal.item_info['tab_type']
         section = self.current_deal.item_info['section']
 
-        item_qty_in_cell = self.get_items_qty_in_cell(item_coord, item_name=item)
+        item_qty_in_cell = 0
         while not item_qty_in_cell:
             self.try_to_open_tab(tab_number, tab_type, section)
-            item_qty_in_cell = self.get_items_qty_in_cell(item_coord, item_name=item)
+            _, item_qty_in_cell = self.get_item_and_qty_in_cell(item_coord)
 
             if self.stop():
                 raise StopStepError("Не смог открыть валютную вкладку")
@@ -1017,20 +1091,21 @@ class PoeSeller(PoeBase):
 
         stash_region = self.v('region_stash_fields')
         y = stash_region[1] + stash_region[3] / 12 / 2  # Половина первой клетки
+        x0 = stash_region[0]
         w = stash_region[2]  # Ширина стеша
         if tab_type == 'fragmentLayout':
             if section == 'general':
-                x = w * 1/8
+                x = w * 1 / 8
             elif section == 'breach':
-                x = w * 3/8
+                x = w * 3 / 8
             elif section == 'scarab':
-                x = w * 5/8
+                x = w * 5 / 8
             elif section == 'maven' or section == 'eldritch':
                 raise NotImplementedError("Не реализована продажа из вкладки eldritch/maven")
 
                 # TODO: 1) балк запрос, но итемы лежат в разных ячейках, 2) сетка начинается от середины стешфилдс
 
-                x = w * 7/8
+                x = w * 7 / 8
                 # Открываем секцию
                 self.mouse_move_and_click(x, y, clicks=1, duration=.15, sleep_after=.15)
 
@@ -1045,9 +1120,9 @@ class PoeSeller(PoeBase):
 
         elif tab_type == 'currencyLayout':
             if section == 'general':
-                x = w * 3/8
+                x = w * 3 / 8
             elif section == 'influence':
-                x = w * 5/8
+                x = w * 5 / 8
             else:
                 raise BotDevelopmentError(f"Ошибка разработки бота. "
                                           f"Для типа '{tab_type}' секции '{section}' не указаны координаты")
@@ -1056,12 +1131,15 @@ class PoeSeller(PoeBase):
             raise BotDevelopmentError(f"Ошибка разработки бота. "
                                       f"Для типа '{tab_type}' не указаны координаты")
 
-        self.mouse_move_and_click(x, y, clicks=1, duration=.15, sleep_after=.15)
+        self.mouse_move_and_click(x0 + x, y, clicks=1, duration=.15, sleep_after=.15)
 
     def get_item_image(self, item):
         return self.current_deal.image
 
     def get_item_size(self, item):
+        if item == "Chaos Orb" or item == "Divine Orb":
+            return {'w': 1, 'h': 1}
+
         return {'w': self.current_deal.item_info['w'], 'h': self.current_deal.item_info['h']}
 
     # endregion
@@ -1070,13 +1148,18 @@ class PoeSeller(PoeBase):
 
     def invite_trade(self):
         while not self.find_template('template_trade'):
+            if self.trade_invite_number > self.MAX_TRADE_INVITE_NUMBER:
+                raise StopStepError(f"Покупатель не принял трейд c {self.MAX_TRADE_INVITE_NUMBER}")
+
+            self.trade_invite_number += 1
+
             if not self.deal_is_available(self.current_deal):
                 raise StopStepError("Не стал кидать трейд, сделка недоступна (покупатель не в ХО)")
 
             if not self.find_template('template_waiting_trade_request'):
                 self.send_to_chat(f"/tradewith {self.current_deal.character_name}")
 
-            time.sleep(2)
+            time.sleep(2 + self.trade_invite_number)
 
             if self.stop():
                 raise StopStepError("Покупатель не принял трейд")
@@ -1088,8 +1171,30 @@ class PoeSeller(PoeBase):
             self.save_current_deal_result(result, 'cancelled')
         elif self.trade_state == 'not_finished':
             self.save_current_deal_result(result, 'ignored_by_seller')
-        self.change_item_qty(
-            self.current_deal.item_name, self.current_deal.item_qty, self.current_deal.position)
+
+        self.return_deal_items_to_stash()
+        self.change_item_qty(self.current_deal.item_name, self.current_deal.item_qty, self.current_deal.position)
+
+    def return_deal_items_to_stash(self):
+        self.try_to_open_tab(self.current_deal.item_tab_number,
+                             self.current_deal.item_info['tab_type'],
+                             self.current_deal.item_info['section'])
+
+        if self.current_deal.item_info['is_layout']:
+            self.clear_inventory()
+        else:
+            cell_pos = self.virtual_inventory.get_last_cell(self.current_deal.item_name)
+            inv_region = self.v('region_inventory_fields')
+            inv_cell_coords = [int(inv_region[0] + inv_region[2] * (cell_pos[1] + 0.5) / 12),
+                               int(inv_region[1] + inv_region[3] * (cell_pos[0] + 0.5) / 5)]
+            self.mouse_move_and_click(*inv_cell_coords, duration=.5)
+            self.mouse_move_and_click(*self.current_deal.item_coords, duration=.5, sleep_after=.5)
+            pyautogui.click(button='right')
+            time.sleep(.15 + self.v('button_delay_ms') / 1000)
+            keyboard.write(self.current_deal.item_info['note'])
+            time.sleep(.15 + self.v('button_delay_ms') / 1000)
+            pyautogui.press('enter')
+            time.sleep(.15 + self.v('button_delay_ms') / 1000)
 
     def put_items(self):
         self.from_inventory_to_trade()
@@ -1105,13 +1210,15 @@ class PoeSeller(PoeBase):
             if not self.find_template('template_trade'):
                 raise StopStepError("Трейд закрылся до завершения")
 
-            divine_qty = self.count_items(region, "Divine Orb")
+            items_qty = self.count_items(region, accuracy=.5)
+            divine_qty = items_qty.get("Divine Orb", 0)
+            chaos_qty = items_qty.get("Chaos Orb", 0)
+
             # Для случаев покупок за дивайны, очень часто будет всё четко, лишние действия не делаем
             if self.current_deal.currency == "divine" \
                     and self.current_deal.divine_qty and divine_qty >= self.current_deal.divine_qty:
                 break
 
-            chaos_qty = self.count_items(region, "Chaos Orb")
             # Для случаев покупок за хаосы, очень часто будет всё четко, лишние действия не делаем
             if self.current_deal.currency == "chaos" \
                     and self.current_deal.chaos_qty and chaos_qty >= self.current_deal.chaos_qty:
@@ -1130,17 +1237,17 @@ class PoeSeller(PoeBase):
 
     def enough_currency_qty(self, divine_qty, chaos_qty):
         def chaos_qty_from_divine_qty(_divine_qty):
-            return round(_divine_qty * (1/self.chaos_price))
+            return round(_divine_qty * (1 / self.chaos_price))
 
         return (chaos_qty_from_divine_qty(divine_qty) + chaos_qty) >= (chaos_qty_from_divine_qty(
-            self.current_deal.divine_qty) + self.current_deal.chaos_qty) * (1 - self.v('price_tolerance')/100)
+            self.current_deal.divine_qty) + self.current_deal.chaos_qty) * (1 - self.v('price_tolerance') / 100)
 
     def set_complete_trade(self):
-        if self.find_template('template_cancel_complete_trade', accuracy=.8):
+        if self.find_template('template_cancel_complete_trade'):
             # Уже нажата кнопка (т.к. вместо нее появилась кнопка отмены трейда)
             return
 
-        self.click_to('template_complete_trade', accuracy=.8)
+        self.click_to('template_complete_trade')
 
     # endregion
 
@@ -1160,10 +1267,20 @@ class PoeSeller(PoeBase):
 
     def on_complete_trade(self):
         self.say_ty()
-        self.leave_party()
+
+        if not self.character_have_another_deal(self.current_deal.character_name):
+            self.leave_party()
+
         self.increase_currency()
 
         self.current_deal = DealPOETrade()
+
+    def character_have_another_deal(self, character_name):
+        for deal in self.deals:
+            if character_name == deal.character_name:
+                return True
+
+        return False
 
     def say_ty(self):
         self.send_to_chat(f"@{self.current_deal.character_name} ty")
@@ -1184,6 +1301,9 @@ class PoeSeller(PoeBase):
         template_decline = self.v('template_decline')
 
         while True:
+            if self.need_stop_threads():
+                return
+
             self.check_freeze()
 
             xywh = self.find_template(template_decline, move_to_1_1=False)
@@ -1197,4 +1317,3 @@ class PoeSeller(PoeBase):
                 time.sleep(.5)
 
             time.sleep(.5)
-

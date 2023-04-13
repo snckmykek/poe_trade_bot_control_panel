@@ -50,6 +50,7 @@ class Database:
                 currency TEXT NOT NULL,
                 identified BOOL NOT NULL,
                 ilvl INTEGER NOT NULL,
+                note TEXT NOT NULL,
                 CONSTRAINT pk PRIMARY KEY (tab_number, cell_id) ON CONFLICT REPLACE
             ) 
             """)
@@ -105,7 +106,7 @@ class Database:
             INSERT INTO
                 items
             VALUES
-                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             values
         )
@@ -139,6 +140,7 @@ class Database:
                 ,items.currency
                 ,items.identified
                 ,items.ilvl
+                ,items.note
                 ,IFNULL(cells_info.tab_type, "") as tab_type
                 ,IFNULL(cells_info.section, "") as section
                 ,IFNULL(cells_info.x, 0) as x

@@ -4,8 +4,8 @@ import traceback
 from kivy.config import Config
 
 Config.set('graphics', 'resizable', '1')
-Config.set('graphics', 'width', '1200')
-Config.set('graphics', 'height', '900')
+Config.set('graphics', 'width', '1120')
+Config.set('graphics', 'height', '630')
 
 # Общие
 import os
@@ -42,7 +42,6 @@ from task_tab import TaskBox, Stages
 from db_requests import Database
 from setting_tab import AppSettingTab, BotSettingTab  # для pyinstaller импорт тут, а не в controllpanel.kv
 from controllers import hotkey_controller
-
 
 app = MDApp.get_running_app()
 
@@ -83,32 +82,20 @@ class ControlPanelApp(MDApp):
         def set_need_stop_task():
             self.need_stop_task = True
 
-        # hotkey = self.s('any', 'hotkey_interrupt_step')
-        hotkey = None
-        if not hotkey:
-            hotkey = "f11"
-        hotkey_controller.add_hotkey(hotkey, set_need_stop_task)
-
         # hotkey_freeze
         @mainthread
         def switch_freeze():
-            self.freeze = not self.freeze
+            if self.freeze:
+                self.freeze = False
+            else:
+                time.sleep(1)
+                self.freeze = True
 
         # hotkey = self.s('any', 'hotkey_freeze')
         hotkey = None
         if not hotkey:
-            hotkey = "alt+f11"
+            hotkey = "f11"
         hotkey_controller.add_hotkey(hotkey, switch_freeze)
-
-        # hotkey_break
-        @mainthread
-        def work_break():
-            self.request_break() if self.state == 'work' else self.start()
-
-        hotkey = self.s('any', 'hotkey_break')
-        if not hotkey:
-            hotkey = "f12"
-        hotkey_controller.add_hotkey(hotkey, work_break)
 
         # hotkey_close
         @mainthread
@@ -117,7 +104,7 @@ class ControlPanelApp(MDApp):
 
         hotkey = self.s('any', 'hotkey_close')
         if not hotkey:
-            hotkey = "alt+f12"
+            hotkey = "f12"
         hotkey_controller.add_hotkey(hotkey, instant_exit)
 
     def add_task_buttons(self):
@@ -142,6 +129,23 @@ class ControlPanelApp(MDApp):
     def build(self):
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "Orange"
+        self.theme_cls.font_styles = {
+            "H1": ["RobotoLight", 96, False, -1.5],
+            "H2": ["RobotoLight", 60, False, -0.5],
+            "H3": ["Roboto", 48, False, 0],
+            "H4": ["Roboto", 34, False, 0.25],
+            "H5": ["Roboto", 24, False, 0],
+            "H6": ["RobotoMedium", 20, False, 0.15],
+            "Subtitle1": ["Roboto", 16, False, 0.15],
+            "Subtitle2": ["RobotoMedium", 14, False, 0.1],
+            "Body1": ["Roboto", 16, False, 0.5],
+            "Body2": ["Roboto", 14, False, 0.25],
+            "Button": ["RobotoMedium", 14, True, 1.25],
+            "Caption": ["Roboto", 12, False, 0.4],
+            "Overline": ["Roboto", 10, True, 1.5],
+            "Icon": ["Icons", 24, False, 0],
+        }
+
         if not self.main:
             self.main = MainScreen()
         return self.main
@@ -182,8 +186,12 @@ class ControlPanelApp(MDApp):
         error_occurred = bool(result.get('error', ""))
 
         self.db.save_stage_lead_time(
-            (_start.timestamp(), self.bot.get_step_fullname(self.current_task, self.current_stage),
-            (datetime.now() - _start).total_seconds(), not error_occurred)
+            (
+                _start.timestamp(),
+                self.bot.get_step_fullname(self.current_task, self.current_stage),
+                (datetime.now() - _start).total_seconds(),
+                not error_occurred
+             )
         )
 
         self.check_freeze()
@@ -491,7 +499,6 @@ class ControlPanelApp(MDApp):
 
         self.tasks_obj.clear()
         for i, task_setting in enumerate(self.bot.tasks):
-
             self.tasks_obj.append(
                 TaskBox(
                     available_mode=task_setting['available_mode'],

@@ -81,7 +81,7 @@
                 width: 1
                 points: [self.x, self.y, self.x, self.y + self.height]
         MDBoxLayout:
-            spacing: '20dp'
+            spacing: '2dp'
             ToggleDealSortType:
                 text: 'profit_per_each'
             ToggleDealSortType:
@@ -89,9 +89,9 @@
         Widget:
         Widget:
 
-<ToggleDealSortType@MDFlatButton+MDToggleButton>:
+<ToggleDealSortType@ToggleButton>:
     group: 'x'
-    md_bg_color: app.theme_cls.primary_color[:3] + [.7 if app.bot.deal_sort_type == self.text else 0]
+    state: 'down' if app.bot.deal_sort_type == self.text else 'normal'
     on_release:
         app.bot.set_deal_sort_type(self.text)
 
@@ -197,14 +197,13 @@
 <BuyerDealListItem>:
     text:
         "x{} Цена: {}/{} {}, профит: {}".format(self.item_stock,
-        self.currency_min_qty, self.item_min_qty, self.currency, self.profit)
+        self.currency_min_qty, self.item_min_qty, self.currency, round(self.profit, 3))
     AsyncImageLeftWidget:
         color:
             [1, 1, 1, 1 if root.image else 0]
         pos_hint: {'center_y': .5}
         source: "https://web.poecdn.com{}".format(root.image) if root.image else ""
         size: dp(26), dp(26)
-
 
 
 <Items>
@@ -232,11 +231,17 @@
             text_color: 0, 0, 0, 0
             theme_text_color: 'Custom'
         MDLabel:
-            size_hint_x: .2
-            text: "Макс цена (в хаосах)"
+            size_hint_x: .1
+            text: "Макс цена (с)"
         MDLabel:
-            size_hint_x: .2
-            text: "Балк цена"
+            size_hint_x: .1
+            text: "Балк цена (с)"
+        MDLabel:
+            size_hint_x: .1
+            text: "Макс цена (d)"
+        MDLabel:
+            size_hint_x: .1
+            text: "Балк цена (d)"
         MDLabel:
             size_hint_x: .15
             text: "Количество"
@@ -284,12 +289,22 @@
     CustomMDTextField:
         id: max_price
         hint_text: str(root.max_price)
-        size_hint_x: .2
+        size_hint_x: .1
         text_type: 'float'
     CustomMDTextField:
         id: bulk_price
         hint_text: str(root.bulk_price)
-        size_hint_x: .2
+        size_hint_x: .1
+        text_type: 'float'
+    CustomMDTextField:
+        id: max_price_d
+        hint_text: str(root.max_price_d)
+        size_hint_x: .1
+        text_type: 'float'
+    CustomMDTextField:
+        id: bulk_price_d
+        hint_text: str(root.bulk_price_d)
+        size_hint_x: .1
         text_type: 'float'
     CustomMDTextField:
         id: qty
@@ -360,6 +375,7 @@
 
 <ToggleRectangleFlatButton>:
     line_color: app.theme_cls.primary_color if self.state == 'down' else [0] * 4
+    font_size: '16dp'
     on_release: self.func(self)
 
 

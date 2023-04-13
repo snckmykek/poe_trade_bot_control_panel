@@ -25,6 +25,8 @@ class Database:
                 use BOOL NOT NULL,
                 max_price REAL NOT NULL,
                 bulk_price REAL NOT NULL,
+                max_price_d REAL NOT NULL,
+                bulk_price_d REAL NOT NULL,
                 max_qty INT NOT NULL
             ) 
             """)
@@ -182,6 +184,8 @@ class Database:
                     IFNULL(items.use, False) as use,
                     IFNULL(items.max_price, 0) as max_price,
                     IFNULL(items.bulk_price, 0) as bulk_price,
+                    IFNULL(items.max_price_d, 0) as max_price_d,
+                    IFNULL(items.bulk_price_d, 0) as bulk_price_d,
                     IFNULL(items.max_qty, 0) as max_qty
                 FROM
                     poe_items
@@ -232,30 +236,34 @@ class Database:
 
     def get_poe_item_image(self, item):
 
-        self.cur.execute(
-            f"""
-            SELECT 
-                image
-            FROM
-                poe_items
-            WHERE item = "{item}"
-            """)
+        with self.lock:
+            self.cur.execute(
+                f"""
+                SELECT 
+                    image
+                FROM
+                    poe_items
+                WHERE item = "{item}"
+                """)
 
-        return self.cur.fetchone()['image']
+            result = self.cur.fetchone()['image']
+
+        return result
 
     def save_deal_history(self, values):
 
-        self.cur.execute(
-            """
-            INSERT INTO 
-                deals_history
-            VALUES
-                (?,?,?,?,?,?,?,?,?,?)
-            """,
-            values
-        )
+        with self.lock:
+            self.cur.execute(
+                """
+                INSERT INTO 
+                    deals_history
+                VALUES
+                    (?,?,?,?,?,?,?,?,?,?)
+                """,
+                values
+            )
 
-        self.commit()
+            self.commit()
 
     def get_last_deals(self, qty=10):
 

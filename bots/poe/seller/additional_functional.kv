@@ -129,7 +129,7 @@
     markup: True
     text:
         ("[b]x{} за {} {} ({})[/b]" if self.character_name in app.bot.characters_in_area else "x{} за {} {} ({})" \
-        ).format(self.item_qty, self.divine_qty if self.currency.startswith("D") else self.chaos_qty, \
+        ).format(self.item_qty, self.divine_qty if self.currency.startswith("d") else self.chaos_qty, \
         self.currency, self.character_name)
     AsyncImageLeftWidget:
         color:

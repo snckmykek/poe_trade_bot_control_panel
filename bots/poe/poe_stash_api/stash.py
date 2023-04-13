@@ -41,7 +41,7 @@ def fetch_tab(league, realm, account_name, poe_sessid, tab_index):
         'POESESSID': poe_sessid,
     }
     headers = {
-        'user-agent': 'poe-stash-api/0.1.0 simple python functions to retrieve PoE stash info'
+        'user-agent': 'Mozilla/5.0 (Windows; Windows NT 6.0; WOW64; en-US) AppleWebKit/536.39 (KHTML, like Gecko) Chrome/49.0.2324.119 Safari/601'
     }
 
     r = requests.post(url, data=data, cookies=cookies, headers=headers)
@@ -92,6 +92,10 @@ def fetch_all_tabs(league, realm, account_name, poe_sessid):
         else:
             tab_index = tab_index + 1
             flood_delay = 30
+
+        if tab_index > 15:
+            break
+
     return tabs
 
 
