@@ -26,9 +26,9 @@ from bots.bot import Coord, Simple, Template, get_window_param, to_global
 from bots.common import CustomDialog, DealPOETrade
 from bots.poe.poe_base import PoeBase
 from bots.poe.buyer.db_requests import Database
-from bots.poe.buyer.additional_functional import Content, Items, Blacklist
+from bots.poe.buyer.additional_functional import Content, Items, Blacklist, get_custom_items
 from controllers import mouse_controller
-from errors import StopStepError
+from errors import StopStepError, BotDevelopmentError
 
 
 class PoeBuyer(PoeBase):
@@ -45,8 +45,8 @@ class PoeBuyer(PoeBase):
     divine_price: float = NumericProperty()
     deals: list = ListProperty()
     # TODO Сохранять в настройки (или вообще вынести его в настройки, подумать)
-    deal_sort_type: Literal['profit_per_each', 'profit'] = StringProperty('profit_per_each')
-    items_left = NumericProperty()
+    deal_sort_type: Literal['profit_per_each', 'profit'] = StringProperty('profit')
+    items_left = NumericProperty(-1)
     in_own_hideout = BooleanProperty(False)
     need_update_swag = True
     party_accepted: bool = False
@@ -130,7 +130,7 @@ class PoeBuyer(PoeBase):
             },
             {
                 'name': "Ждать инфу по сделкам",
-                'timer': 60,
+                'timer': 300,
                 'available_mode': 'always',
                 'stages': [
                     {
@@ -263,11 +263,6 @@ class PoeBuyer(PoeBase):
                 Simple(
                     key='league',
                     name="Лига",
-                    type='str'
-                ),
-                Simple(
-                    key='account_name',
-                    name="Имя профиля аккаунта бота (accountName)",
                     type='str'
                 ),
                 Simple(
@@ -717,7 +712,7 @@ class PoeBuyer(PoeBase):
         try:
             self.update_currency_price()
         except Exception as e:
-            self.print_log(f"Ошибка получения валюты: {e}\n")
+            self.print_log(f"Ошибка получения валюты: {e}\n{traceback.format_exc()}")
             return False
 
         return True
@@ -814,19 +809,335 @@ class PoeBuyer(PoeBase):
         :return: Отсортированный по профиту список сделок
         """
 
-        def deal_completed(_deal_id):
-            return _deal_id in last_deals_100
-
-        def in_blacklist(_character_name):
-            return _character_name in blacklist
-
         self.update_proxies_queue()
 
         last_deals_100 = self.db.get_last_deals(100)
         blacklist = self.db.get_blacklist()
         deals = []
 
+        _last_poe_trade_request = time.time()
+        for item_i_have, items_i_want in order.items():
+            for item_i_want in items_i_want:
+                try:
+                    if self.item_is_custom_search(item_i_want):
+                        self.add_deal_by_custom_searches(
+                            deals, item_i_have, item_i_want, last_deals_100, blacklist)
+                    else:
+                        self.add_deal_by_bulk(
+                            deals, item_i_have, item_i_want, last_deals_100, blacklist, min_stock=min_stock)
+
+                except Exception as e:
+                    self.print_log(f"{e}\n{traceback.format_exc()}")
+                    return
+
+
+        if deal_sort_type == 'profit_per_each':
+            # Сортировка по профиту за штуку + количеству всего
+            deals = sorted(deals,
+                           key=lambda d: (
+                               d.profit_per_each if d.profit_per_each else (d.item_min_qty / d.currency_min_qty),
+                               d.item_stock
+                           ),
+                           reverse=True
+                           )
+        elif deal_sort_type == 'profit':
+            # Сортировка по профиту общему профиту от сделки
+            deals = sorted(deals,
+                           key=lambda d: d.profit if d.profit else (d.item_min_qty / d.currency_min_qty),
+                           reverse=True
+                           )
+
+        return deals[:qty_deals]
+
+    def item_is_custom_search(self, item_i_have):
+        # TODO: в перспективе отдельную таблицу и туда кастомные создавать
+
+        if isinstance(item_i_have, str):
+            return False
+
+        for custom_item_name in get_custom_items():
+            if custom_item_name == item_i_have['name']:
+                return True
+
+        return False
+
+    def add_deal_by_custom_searches(self, deals, item_i_have, item_i_want, last_deals_100, blacklist):
+
+        def deal_completed(_deal_id):
+            return _deal_id in last_deals_100
+
+        def in_blacklist(_character_name):
+            return _character_name in blacklist
+
+        QTY_FOR_SEARCH_ITEM = 10
+
         league = self.v('league')
+
+        # Ссылка для запроса к странице с балком
+        url = fr"https://www.pathofexile.com/api/trade/search/{league}"
+
+        headers = {
+            "Host": "www.pathofexile.com",
+            "Connection": "keep - alive",
+            "Content-Length": "127",
+            "sec-ch-ua": '" Not A;Brand";v="99", "Chromium";v="99", "Google Chrome";v="99"',
+            "Accept": "*/*",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "sec-ch-ua-mobile": "?0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/99.0.4844.82 Safari/537.36",
+            "sec-ch-ua-platform": '"Windows"',
+            "Origin": "https://www.pathofexile.com",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "Referer": f"https://www.pathofexile.com/trade/search/{league}",
+            "Accept-Encoding": "gzip,deflate,br",
+            "Accept-Language": "q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cookie": f"POESESSID={self.v('trade_POESESSID')}"
+        }
+
+        data = {
+            "query": {
+                "filters": {
+                    "trade_filters": {
+                        "disabled": False,
+                        "filters": {
+                            "price": {
+                                "option": item_i_have,
+                                "max": item_i_want['max_price']
+                            }
+                        }
+                    }
+                },
+                "status": {
+                    "option": "online"
+                },
+                "stats": [
+                    {
+                        "type": "and",
+                        "filters": self.get_item_filters(item_i_want['name'])
+                    }
+                ],
+            },
+            "sort": {
+                "price": "asc"
+            }
+        }
+
+        # Перерыв зависит от ответа АПИ ПОЕ
+        current_proxy_info = self.proxies_queue.pop(0)
+        _delta = math.ceil(self._requests_interval - (time.time() - current_proxy_info['last_use']))
+        if current_proxy_info['last_use'] and _delta > 0:
+            self.print_log(f"Прокси: {current_proxy_info['proxy']}, ожидание: {_delta}")
+            time.sleep(_delta)
+
+        proxy = current_proxy_info['proxy']
+        if proxy:
+            proxies = {'https': f'http://{proxy}'}
+        else:
+            proxies = {}
+
+        # Получаем результат поиска по запросу
+        # Если не работает, значит не установлен pip install brotli
+        response_request = requests.post(url, headers=headers, json=data, proxies=proxies)
+
+        current_proxy_info['last_use'] = int(time.time())
+        self.proxies_queue.append(current_proxy_info)
+
+        response = response_request.json()
+
+        interval_rule = response_request.headers['X-Rate-Limit-Ip'].split(",")[-1].split(":")
+        self._requests_interval = float(interval_rule[1]) / float(interval_rule[0]) + .5
+
+        try:
+            # Код ошибки "Лимит запросов за промежуток времени (меняется динамически)"
+            if response['error']['code'] == 3:
+                while response['error']['code'] == 3:
+                    retry_after = float(response_request.headers[
+                                            'Retry-After'])  # Время "блокировки" при нарушении частоты
+                    self.print_log(f"Из-за лимита запроса время ожидания до некст трейда: {retry_after}")
+                    time.sleep(retry_after)
+
+                    response_request = requests.post(url, headers=headers, json=data)
+                    response = response_request.json()
+        except Exception:
+            pass
+
+        query_id = response['id']
+        deals_id = ','.join(response['result'][:QTY_FOR_SEARCH_ITEM])
+
+        if not deals_id:
+            return
+
+        headers = {
+            'Host': 'www.pathofexile.com',
+            'Connection': 'keep-alive',
+            'sec-ch-ua': '"Not?A_Brand";v="99", "Opera";v="97", "Chromium";v="111"',
+            'Accept': '*/*',
+            'X-Requested-With': 'XMLHttpRequest',
+            'sec-ch-ua-mobile': '?0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/111.0.0.0 Safari/537.36 OPR/97.0.0.0',
+            'sec-ch-ua-platform': '"Windows"',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+            'Referer': f'https://www.pathofexile.com/trade/search/Crucible/{query_id}',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Cookie': f"POESESSID={self.v('trade_POESESSID')}",
+        }
+
+        response_request_deals = requests.get(
+            fr"https://www.pathofexile.com/api/trade/fetch/{deals_id}?query={query_id}", headers=headers)
+        response_deals = response_request_deals.json()
+        results = response_deals['result']
+
+        for deal_info in results:
+
+            if deal_info.get('gone', False):
+                continue
+
+            deal_id = deal_info['id']
+            account_info = deal_info['listing']['account']
+            offer_info = deal_info['listing']
+            item_info = deal_info['item']
+
+            # Если сделка уже была (просто не прогрузился поетрейд) или чел в БЛ, то она не нужна
+            if deal_completed(deal_id) or in_blacklist(account_info['lastCharacterName']) \
+                    or self.skip_by_whispers_history(account_info['lastCharacterName']):
+                continue
+
+            deal = DealPOETrade()
+            deal.id = deal_id
+            deal.account_name = account_info['name']
+            deal.character_name = account_info['lastCharacterName']
+            deal.currency = offer_info['price']['currency']
+            deal.currency_min_qty = offer_info['price']['amount']
+            deal.item = item_info['name'] + " " if item_info['name'] else "" + item_info['typeLine']
+            deal.item_min_qty = 1
+            deal.item_stock = 1
+            deal.item_info = item_info
+            deal.whisper = offer_info['whisper']
+            deal.is_custom_search = True
+
+            deal.price_for_each = deal.currency_min_qty
+
+            deal.profit_per_each = round(item_i_want['bulk_price'] - deal.price_for_each, 3)
+            deal.profit = deal.profit_per_each
+            deal.image = item_info['icon'].split("https://web.poecdn.com")[1]
+            deal.item_name = item_i_want['name']
+
+            deals.append(deal)
+
+    def get_item_filters(self, item_name):
+        # ["Map Occupied by Enslaver", "Map Occupied by Eradicator", "Map Occupied by Constrictor",
+        # "Map Occupied by Purifier",
+        # "Map Contains Baran", "Map Contains Veritania", "Map Contains Al-Hezmin", "Map Contains Drox"]
+        if item_name == "Map Occupied by Enslaver":
+            return [
+                {
+                    "id": "implicit.stat_3624393862",
+                    "disabled": False,
+                    "value": {"option": 1}
+                }
+            ]
+        elif item_name == "Map Occupied by Eradicator":
+            return [
+                {
+                    "id": "implicit.stat_3624393862",
+                    "disabled": False,
+                    "value": {"option": 2}
+                }
+            ]
+        elif item_name == "Map Occupied by Constrictor":
+            return [
+                {
+                    "id": "implicit.stat_3624393862",
+                    "disabled": False,
+                    "value": {"option": 3}
+                }
+            ]
+        elif item_name == "Map Occupied by Purifier":
+            return [
+                {
+                    "id": "implicit.stat_3624393862",
+                    "disabled": False,
+                    "value": {"option": 4}
+                }
+            ]
+        elif item_name == "Map Contains Baran":
+            return [
+                {
+                    "id": "implicit.stat_2563183002",
+                    "disabled": False,
+                    "value": {"option": 1}
+                }
+            ]
+        elif item_name == "Map Contains Veritania":
+            return [
+                {
+                    "id": "implicit.stat_2563183002",
+                    "disabled": False,
+                    "value": {"option": 2}
+                }
+            ]
+        elif item_name == "Map Contains Al-Hezmin":
+            return [
+                {
+                    "id": "implicit.stat_2563183002",
+                    "disabled": False,
+                    "value": {"option": 3}
+                }
+            ]
+        elif item_name == "Map Contains Drox":
+            return [
+                {
+                    "id": "implicit.stat_2563183002",
+                    "disabled": False,
+                    "value": {"option": 4}
+                }
+            ]
+        else:
+            raise BotDevelopmentError(f"Для итема '{item_name}' не разработаны фильтры")
+
+    def get_item_search_params(self, item_name):
+        # ["Map Occupied by Enslaver", "Map Occupied by Eradicator", "Map Occupied by Constrictor",
+        # "Map Occupied by Purifier",
+        # "Map Contains Baran", "Map Contains Veritania", "Map Contains Al-Hezmin", "Map Contains Drox"]
+        if item_name == "Map Occupied by Enslaver":
+            return "Map is occupied by Enslaver"
+        elif item_name == "Map Occupied by Eradicator":
+            return "Map is occupied by Eradicator"
+        elif item_name == "Map Occupied by Constrictor":
+            return "Map is occupied by Constrictor"
+        elif item_name == "Map Occupied by Purifier":
+            return "Map is occupied by Purifier"
+        elif item_name == "Map Contains Baran":
+            return "Map contains Baran's Citadel"
+        elif item_name == "Map Contains Veritania":
+            return "Map contains Veritania's Citadel"
+        elif item_name == "Map Contains Al-Hezmin":
+            return "Map contains Al-Hezmin's Citadel"
+        elif item_name == "Map Contains Drox":
+            return "Map contains Drox's Citadel"
+        else:
+            raise BotDevelopmentError(f"Для итема '{item_name}' не разработаны параметры")
+
+    def add_deal_by_bulk(self, deals, item_i_have, item_i_want, last_deals_100, blacklist, min_stock=1):
+
+        def deal_completed(_deal_id):
+            return _deal_id in last_deals_100
+
+        def in_blacklist(_character_name):
+            return _character_name in blacklist
+
+        league = self.v('league')
+
+        # Ссылка для запроса к странице с балком
+        url = fr"https://www.pathofexile.com/api/trade/exchange/{league}"
 
         headers = {
             "Host": "www.pathofexile.com",
@@ -850,122 +1161,97 @@ class PoeBuyer(PoeBase):
             "Cookie": f"POESESSID={self.v('trade_POESESSID')}"
         }
 
-        # Ссылка для запроса к странице с балком
-        url = fr"https://www.pathofexile.com/api/trade/exchange/{league}"
+        simple_item = isinstance(item_i_want, str)
 
-        _last_poe_trade_request = time.time()
-        for item_i_have, items_i_want in order.items():
-            for item_i_want in items_i_want:
-                simple_item = isinstance(item_i_want, str)
+        # Запрос поиска
+        data = {
+            "query": {
+                "status": {
+                    "option": "online"
+                },
+                "want": [item_i_want if simple_item else item_i_want['item'], ],
+                "have": [item_i_have, ],
+                "minimum": min_stock
+            },
+            "sort": {
+                "have": "asc"
+            },
+            "engine": "new"
+        }
 
-                # Запрос поиска
-                data = {
-                    "query": {
-                        "status": {
-                            "option": "online"
-                        },
-                        "want": [item_i_want if simple_item else item_i_want['item'], ],
-                        "have": [item_i_have, ],
-                        "minimum": min_stock
+        # Перерыв зависит от ответа АПИ ПОЕ
+        current_proxy_info = self.proxies_queue.pop(0)
+        _delta = math.ceil(self._requests_interval - (time.time() - current_proxy_info['last_use']))
+        if current_proxy_info['last_use'] and _delta > 0:
+            self.print_log(f"Прокси: {current_proxy_info['proxy']}, ожидание: {_delta}")
+            time.sleep(_delta)
 
-                    },
-                    "sort": {
-                        "have": "asc"
-                    },
-                    "engine": "new"
-                }
+        proxy = current_proxy_info['proxy']
+        if proxy:
+            proxies = {'https': f'http://{proxy}'}
+        else:
+            proxies = {}
 
-                # Перерыв зависит от ответа АПИ ПОЕ
-                current_proxy_info = self.proxies_queue.pop(0)
-                _delta = math.ceil(self._requests_interval - (time.time() - current_proxy_info['last_use']))
-                if current_proxy_info['last_use'] and _delta > 0:
-                    self.print_log(f"Прокси: {current_proxy_info['proxy']}, ожидание: {_delta}")
-                    time.sleep(_delta)
+        # Получаем результат поиска по запросу
+        # Если не работает, значит не установлен pip install brotli
+        response_request = requests.post(url, headers=headers, json=data, proxies=proxies)
 
-                proxy = current_proxy_info['proxy']
-                if proxy:
-                    proxies = {'https': f'http://{proxy}'}
-                else:
-                    proxies = {}
+        current_proxy_info['last_use'] = int(time.time())
+        self.proxies_queue.append(current_proxy_info)
 
-                # Получаем результат поиска по запросу
-                # Если не работает, значит не установлен pip install brotli
-                response_request = requests.post(url, headers=headers, json=data, proxies=proxies)
+        response = response_request.json()
 
-                current_proxy_info['last_use'] = int(time.time())
-                self.proxies_queue.append(current_proxy_info)
+        interval_rule = response_request.headers['X-Rate-Limit-Ip'].split(",")[-1].split(":")
+        self._requests_interval = float(interval_rule[1]) / float(interval_rule[0]) + .5
 
-                response = response_request.json()
+        try:
+            # Код ошибки "Лимит запросов за промежуток времени (меняется динамически)"
+            if response['error']['code'] == 3:
+                while response['error']['code'] == 3:
+                    retry_after = float(response_request.headers[
+                                            'Retry-After'])  # Время "блокировки" при нарушении частоты
+                    self.print_log(f"Из-за лимита запроса время ожидания до некст трейда: {retry_after}")
+                    time.sleep(retry_after)
 
-                interval_rule = response_request.headers['X-Rate-Limit-Ip'].split(",")[-1].split(":")
-                self._requests_interval = float(interval_rule[1]) / float(interval_rule[0]) + .5
+                    response_request = requests.post(url, headers=headers, json=data)
+                    response = response_request.json()
+        except Exception:
+            pass
 
-                try:
-                    # Код ошибки "Лимит запросов за промежуток времени (меняется динамически)"
-                    if response['error']['code'] == 3:
-                        while response['error']['code'] == 3:
-                            retry_after = float(response_request.headers[
-                                                    'Retry-After'])  # Время "блокировки" при нарушении частоты
-                            self.print_log(f"Из-за лимита запроса время ожидания до некст трейда: {retry_after}")
-                            time.sleep(retry_after)
+        results = response["result"]
 
-                            response_request = requests.post(url, headers=headers, json=data)
-                            response = response_request.json()
-                except Exception:
-                    pass
+        for deal_id, deal_info in results.items():
+            account_info = deal_info['listing']['account']
+            offer_info = deal_info['listing']['offers'][0]
 
-                results = response["result"]
+            # Если сделка уже была (просто не прогрузился поетрейд) или чел в БЛ, то она не нужна
+            if deal_completed(deal_id) or in_blacklist(account_info['lastCharacterName']) \
+                    or self.skip_by_whispers_history(account_info['lastCharacterName']):
+                continue
 
-                for deal_id, deal_info in results.items():
-                    account_info = deal_info['listing']['account']
-                    offer_info = deal_info['listing']['offers'][0]
+            deal = DealPOETrade()
+            deal.id = deal_id
+            deal.account_name = account_info['name']
+            deal.character_name = account_info['lastCharacterName']
+            deal.currency = offer_info['exchange']['currency']
+            deal.currency_min_qty = offer_info['exchange']['amount']
+            deal.exchange_whisper = offer_info['exchange']['whisper']
+            deal.item = offer_info['item']['currency']
+            deal.item_min_qty = offer_info['item']['amount']
+            deal.item_stock = math.floor(
+                offer_info['item']['stock'] / offer_info['item']['amount']) * offer_info['item']['amount']
+            deal.item_whisper = offer_info['item']['whisper']
+            deal.whisper_template = deal_info['listing']['whisper']
 
-                    # Если сделка уже была (просто не прогрузился поетрейд) или чел в БЛ, то она не нужна
-                    if deal_completed(deal_id) or in_blacklist(account_info['lastCharacterName']) \
-                            or self.skip_by_whispers_history(account_info['lastCharacterName']):
-                        continue
+            deal.price_for_each = deal.currency_min_qty / deal.item_min_qty
+            if not simple_item:
+                deal.profit_per_each = round(item_i_want['bulk_price'] - deal.price_for_each, 3)
+                deal.profit = round(deal.profit_per_each * deal.item_stock, 3)
+                deal.image = item_i_want['image']
+                deal.item_name = item_i_want['name']
 
-                    deal = DealPOETrade()
-                    deal.id = deal_id
-                    deal.account_name = account_info['name']
-                    deal.character_name = account_info['lastCharacterName']
-                    deal.currency = offer_info['exchange']['currency']
-                    deal.currency_min_qty = offer_info['exchange']['amount']
-                    deal.exchange_whisper = offer_info['exchange']['whisper']
-                    deal.item = offer_info['item']['currency']
-                    deal.item_min_qty = offer_info['item']['amount']
-                    deal.item_stock = math.floor(
-                        offer_info['item']['stock'] / offer_info['item']['amount']) * offer_info['item']['amount']
-                    deal.item_whisper = offer_info['item']['whisper']
-                    deal.whisper_template = deal_info['listing']['whisper']
-
-                    deal.price_for_each = deal.currency_min_qty / deal.item_min_qty
-                    if not simple_item:
-                        deal.profit_per_each = round(item_i_want['bulk_price'] - deal.price_for_each, 3)
-                        deal.profit = round(deal.profit_per_each * deal.item_stock, 3)
-                        deal.image = item_i_want['image']
-                        deal.item_name = item_i_want['name']
-
-                    if simple_item or deal.price_for_each <= item_i_want['max_price']:
-                        deals.append(deal)
-
-        if deal_sort_type == 'profit_per_each':
-            # Сортировка по профиту за штуку + количеству всего
-            deals = sorted(deals,
-                           key=lambda d: (
-                               d.profit_per_each if d.profit_per_each else (d.item_min_qty / d.currency_min_qty),
-                               d.item_stock
-                           ),
-                           reverse=True
-                           )
-        elif deal_sort_type == 'profit':
-            # Сортировка по профиту общему профиту от сделки
-            deals = sorted(deals,
-                           key=lambda d: d.profit if d.profit else (d.item_min_qty / d.currency_min_qty),
-                           reverse=True
-                           )
-
-        return deals[:qty_deals]
+            if simple_item or deal.price_for_each <= item_i_want['max_price']:
+                deals.append(deal)
 
     def update_proxies_queue(self):
         proxies_list = self.v('proxies_list').split(",")
@@ -1043,14 +1329,29 @@ class PoeBuyer(PoeBase):
 
         while (self.swag['chaos'] == 0 and self.v('min_chaos')) and (self.swag['divine'] == 0 and self.v('min_divine')):
             if self.stop():
+                self.send_message_to_telegram(
+                    self.msg_for_telegram_with_bot_name(
+                        "Не смог посчитать валюту в стеше"
+                    )
+                )
                 raise StopStepError("Не дождался инфы о валюте в стеше")
 
         while self.chaos_price == 0 or self.divine_price == 0:
             if self.stop():
+                self.send_message_to_telegram(
+                    self.msg_for_telegram_with_bot_name(
+                        "Не дождался инфы о цене курренси, мб пое трейд не работает"
+                    )
+                )
                 raise StopStepError("Не дождался инфы о цене дивайна")
 
         while not self.deals:
             if self.stop():
+                self.send_message_to_telegram(
+                    self.msg_for_telegram_with_bot_name(
+                        "Давненько не появлялись новые сделки... =("
+                    )
+                )
                 raise StopStepError("Не дождался инфы о сделках")
 
     # endregion
@@ -1065,12 +1366,15 @@ class PoeBuyer(PoeBase):
             raise StopStepError(f"Количество валюты меньше минимальных значений. Chaos: {self.swag['chaos']} "
                                 f"(минимум: {min_chaos}), Divine: {self.swag['divine']} (минимум: {min_divine})")
 
+        if self.items_left == 0:
+            self.go_home(forced=True)
+            raise StopStepError(f"Закончились итемы для закупки")
+
         self.start_deal_timestamp = int(datetime.now().timestamp())
 
         if not self.party_thread or not self.party_thread.is_alive():
             self.party_thread = threading.Thread(target=lambda *_: self.accept_party(), daemon=True)
             self.party_thread.start()
-
     # endregion
 
     # region Продажа. Запрос сделки
@@ -1533,15 +1837,18 @@ class PoeBuyer(PoeBase):
 
     def teleport(self):
         self.send_to_chat(f"/hideout {self.current_deal.character_name}")
-        time.sleep(self.v('waiting_for_teleport'))
-        self.wait_for_template('template_game_loaded')  # Ждем загрузку
 
+        time.sleep(3)
         # Если мы не можем сделать ТП, то мы в пати с кем-то другим. Проверяем этот вариант
         if self.check_cannot_teleport():
             self.leave_party()
             self.clear_logs()
             self.party_accepted = False
             raise StopStepError(f"Не смог сделать ТП, игрок {self.current_deal.character_name} не в пати")
+
+        time.sleep(max(self.v('waiting_for_teleport') - 3, 0))
+
+        self.wait_for_template('template_game_loaded')  # Ждем загрузку
 
         self.in_own_hideout = False
 
@@ -1595,11 +1902,49 @@ class PoeBuyer(PoeBase):
             if not self.find_template('template_trade'):
                 raise StopStepError("Трейд закрылся до завершения")
 
-            qty = self.count_items(region, accuracy=.5).get(self.current_deal.item_name, 0)
+            if self.current_deal.is_custom_search:
+                qty = self.count_items_by_params(
+                    region, self.current_deal.item_name, accuracy=.5).get(self.current_deal.item_name, 0)
+            else:
+                qty = self.count_items(region, accuracy=.5).get(self.current_deal.item_name, 0)
 
             if self.stop():
                 raise StopStepError(
-                    f"Неверное количество предметов для сделки {qty} (нужно {self.current_deal.item_qty})")
+                    f"Неверное количество предметов для сделки: {qty} (нужно: {self.current_deal.item_qty})")
+
+    def count_items_by_params(self, inv_region, item_name, accuracy=None):
+        cells_positions = self.get_non_empty_cells(inv_region, need_clear_region=False, accuracy=accuracy)
+
+        items_qty = {}
+        for row, col in cells_positions:
+            cell_coords = self.cell_coords_by_position(inv_region, col, row)
+
+            attempts = 0
+            while True:
+                self.mouse_move(*cell_coords, duration=.015)
+                item_info_text = self.get_item_info_text_from_clipboard(
+                    delay=self.v('button_delay_ms') / 1000 * (attempts + 1))
+
+                if item_info_text or attempts >= 2:
+                    break
+                attempts += 1
+
+            item_search_param = self.get_item_search_params(item_name)
+            if item_info_text:
+                if item_search_param in item_info_text:
+                    try:
+                        items_qty[item_name] += 1
+                    except KeyError:
+                        items_qty[item_name] = 1
+            else:
+                self.print_log(f"В ячейке col: {col}, row: {row} не распознан итем: '{item_name}' "
+                               f"по параметру '{item_search_param}'")
+
+        items_qty = self.adjust_qty_by_item_size(items_qty)
+
+        self.print_log(f"Подсчитано {items_qty}")
+
+        return items_qty
 
     def set_complete_trade(self):
         if self.find_template('template_cancel_complete_trade'):

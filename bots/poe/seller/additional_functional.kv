@@ -140,3 +140,79 @@
 
 
 <AsyncImageLeftWidget@ILeftBodyTouch+AsyncImage>:
+
+
+<TabsManager>:
+    orientation: 'vertical'
+    size_hint: None, None
+    height: Window.height * .7
+    width: Window.width * .9
+    spacing: '5dp'
+    MDBoxLayout:
+        height: "63dp"
+        padding: [0, 0, '16dp', 0]
+        size_hint_y: None
+        spacing: '5dp'
+        MDCheckbox:
+            size_hint_x: .05
+            on_active: root.set_use_all_tabs(self.active)
+        MDLabel:
+            padding: '4dp', 0
+            size_hint_x: .05
+            text: "Ном"
+        MDLabel:
+            size_hint_x: .1
+            text: "Имя"
+        MDLabel:
+            size_hint_x: .2
+            text: "Лайаут"
+        MDLabel:
+            size_hint_x: .55
+            text: "Секции"
+        MDIconButton:
+            icon: ''
+    MDScrollView:
+        scroll_type: ['bars', 'content']
+        MDBoxLayout:
+            id: tabs_box
+            padding: [0, '5dp']
+            size_hint_y: None
+            height: self.minimum_height
+            orientation: 'vertical'
+
+
+<TabRow>:
+    height: "63dp"
+    padding: [0, 0, '16dp', 0]
+    size_hint_y: None
+    spacing: '5dp'
+    MDCheckbox:
+        size_hint_x: .05
+        id: use
+        active: root.use
+    CustomMDTextField:
+        id: tab_number
+        hint_text: root.tab_number
+        size_hint_x: .05
+        text_type: 'float'
+    CustomMDTextField:
+        id: tab_name
+        hint_text: root.tab_name
+        size_hint_x: .1
+        text_type: 'str'
+    MDDropDownItem:
+        id: tab_layout
+        text: root.tab_layout
+        size_hint_x: .2
+        on_release: root.open_layouts_menu(self)
+        on_current_item: root.change_sections_from_layout(tab_sections, self.current_item)
+    MDBoxLayout:
+        id: tab_sections
+        spacing: '4dp'
+        size_hint_x: .55
+    MDIconButton:
+        icon: 'trash-can'
+        on_release: root.remove_tab(root)
+        pos_hint: {'center_x': .5, 'center_y': .5}
+        theme_text_color: "Custom"
+        text_color: app.theme_cls.disabled_hint_text_color

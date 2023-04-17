@@ -40,6 +40,8 @@ class DealPOETrade(dict):
     item_coords = [0, 0]
     image = ""
 
+    is_custom_search: bool = False
+
     price_for_each: float = .0
     profit_per_each: float = .0
     profit: float = .0

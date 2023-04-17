@@ -18,13 +18,24 @@ class Database:
         self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS cells_info(
-                tab_number TEXT NOT NULL,
                 tab_type TEXT NOT NULL,
                 cell_id TEXT NOT NULL,
                 section TEXT NOT NULL,
                 x FLOAT NOT NULL,
                 y FLOAT NOT NULL,
                 CONSTRAINT pk PRIMARY KEY (tab_number, cell_id) ON CONFLICT REPLACE
+            ) 
+            """)
+
+        # Инфа по вкладкам стеша
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tabs_info(
+                tab_number TEXT NOT NULL PRIMARY KEY ON CONFLICT REPLACE,
+                use BOOL NOT NULL,
+                tab_name TEXT NOT NULL,
+                tab_layout TEXT NOT NULL,
+                sections TEXT NOT NULL
             ) 
             """)
 
@@ -78,6 +89,27 @@ class Database:
             """
         )
         self.commit()
+
+    def get_cells_info(self, tab_layout, section):
+
+        self.cur.execute(
+            f"""
+            SELECT
+                cell_id
+                ,x
+                ,y
+            FROM
+                cells_info
+            WHERE
+                tab_type = ? and section = ?
+            ORDER BY y, x
+            """,
+            [tab_layout, section]
+        )
+
+        result = self.cur.fetchall()
+
+        return result
 
     def save_cells_info(self, values):
         self.cur.executemany(
@@ -160,6 +192,27 @@ class Database:
         )
         return self.cur.fetchone()
 
+    def get_items_qty(self, items: list):
+
+        self.cur.execute(
+            f"""
+            SELECT
+                items.item_name
+                ,items.qty
+            FROM
+                items
+            WHERE
+                (items.item_name IN({",".join("?" * len(items))}) AND items.is_layout)
+            """,
+            items
+        )
+
+        result = {}
+        for row in self.cur.fetchall():
+            result.update({row['item_name']: row['qty']})
+
+        return result
+
     def change_item_qty(self, item_name, qty, position):
 
         if position is not None:
@@ -182,4 +235,61 @@ class Database:
             values
         )
 
+        self.commit()
+
+    def get_tabs_layouts(self):
+
+        self.cur.execute(
+            f"""
+            SELECT DISTINCT
+                tab_type as tab_layout
+                ,section
+            FROM
+                cells_info
+            """
+        )
+
+        result = {'common': []}
+        for row in self.cur.fetchall():
+            try:
+                result[row['tab_layout']].append(row['section'])
+            except KeyError:
+                result.update({row['tab_layout']: [row['section'], ]})
+
+        return result
+
+    def get_tabs_info(self):
+        self.cur.execute(
+            f"""
+            SELECT
+                tab_number
+                ,use
+                ,tab_name
+                ,tab_layout
+                ,sections
+            FROM
+                tabs_info
+            """
+        )
+
+        result = self.cur.fetchall()
+
+        return result
+
+    def save_tabs_info(self, values):
+        self.cur.execute(
+            """
+            DELETE FROM
+                tabs_info
+            """
+        )
+        self.cur.executemany(
+            """
+            INSERT INTO
+                tabs_info
+            VALUES
+                (?,?,?,?,?)
+            """,
+            values
+        )
         self.commit()

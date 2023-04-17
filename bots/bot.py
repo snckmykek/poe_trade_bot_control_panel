@@ -215,6 +215,7 @@ class Bot(EventDispatcher):
         except StopStepError as e:
             result['error'] = str(e)
             result['error_details'] = traceback.format_exc()
+            self.print_log(result['error'])
 
             if step.get('on_error') and step['on_error'].get('goto'):
                 result['goto'] = step['on_error'].get('goto')
@@ -245,6 +246,11 @@ class Bot(EventDispatcher):
             Этап: ''. Ошибка: {}
             Подробнее:
             {}""".format(self.v('user_name'), self.name, {stage_name}, result['error'], result['error_details']))
+
+    def msg_for_telegram_with_bot_name(self, msg):
+        return dedent("""\
+            Пользователь: '{}'. Бот: '{}'
+            {}""".format(self.v('user_name'), self.name, msg))
 
     def on_stage_started_manually(self):
         """Переназначить для каждого бота, если нужно"""
@@ -301,6 +307,7 @@ class Bot(EventDispatcher):
                     errors.append(str(e))
 
             if errors:
+                self.app.set_status(f"Не все настройки заполнены (клик, чтобы посмотреть)")
                 self.app.error_details = '\n'.join(errors)
                 raise SettingsNotCompletedError("Не все настройки заполнены (клик, чтобы посмотреть)")
 

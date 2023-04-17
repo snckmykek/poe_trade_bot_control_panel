@@ -351,8 +351,16 @@ def update_poe_items():
             items.append(
                 (category['label'], item['id'], item_name_from_text(item['text']), item.get('image', "")))
 
+    for custom_item in get_custom_items():
+        items.append(("Кастомные", custom_item, custom_item, ""))
+
     app.bot.db.save_poe_items(items)
 
+
+def get_custom_items():
+    return ["Map Occupied by Enslaver", "Map Occupied by Eradicator", "Map Occupied by Constrictor",
+            "Map Occupied by Purifier",
+            "Map Contains Baran", "Map Contains Veritania", "Map Contains Al-Hezmin", "Map Contains Drox"]
 
 def item_name_from_text(text):
     """

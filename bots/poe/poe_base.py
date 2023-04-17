@@ -780,7 +780,8 @@ class PoeBase(Bot):
                 self.mouse_move(*item_coord)
 
                 self.key_down('ctrl', sleep_after=.15)
-                self.mouse_click(*item_coord, clicks=need_more, interval=.035, sleep_after=.035)
+                self.mouse_click(*item_coord, clicks=need_more,
+                                 interval=max(.035, self.v('button_delay_ms')/1000), sleep_after=.035)
                 self.key_up('ctrl', sleep_after=.15)
 
             cells_with_items_from_screen = self.get_non_empty_cells(inv_region, need_clear_region=True)
@@ -1105,22 +1106,39 @@ def find_item_info_by_key(item_info_parts, key):
 
     elif key == 'quantity':
         str_value = get_value_after_startswith("Stack Size: ", "1/1").split('/')[0]
-        value = int(str_value.replace("\xa0", ""))  # мб неразрывный пробел \xa0 (1 234 567)
+        value = int(str_value.replace("\xa0", ""))  # мб неразрывный пробел \xa0 (1 000)
+
+    elif key == 'quantity_and_stacksize':
+        str_value = get_value_after_startswith("Stack Size: ", "1/1").split('/')
+        value = [int(_str_value.replace("\xa0", "")) for _str_value in str_value]  # мб неразрывный пробел \xa0 (1 000)
 
     elif key == 'ilvl':
         value = get_value_after_startswith("Item Level: ", "")
-    elif key == 'item_name':
-        # rarity = find_item_info_by_key(item_info_parts, 'rarity')
-        #
-        # # Для уников название в 1 части ровно в 3 строке из 4,
-        # #  а для других - в последней (3 или 4, в зависимости от рарности)
-        # if rarity == "Unique":
-        #     value = item_info_parts[0][2]
-        # else:
-        #     value = item_info_parts[0][-1]
+    elif key == 'identified':
+        value = not find_line_startswith(item_info_parts, "Unidentified")
+    elif key == 'typeLine':
         value = item_info_parts[0][2]
-        if len(item_info_parts[0]) == 4:
-            value += " " + item_info_parts[0][3]
+    elif key == 'baseType':
+        value = item_info_parts[0][3] if len(item_info_parts[0]) == 4 else item_info_parts[0][2]
+    elif key == 'note':
+        value = get_value_after_startswith("Note: ", "")
+    elif key == 'item_name':
+        if "Maps" in item_info_parts[0][0]:
+            if "Unique" in item_info_parts[0][1]:
+                value = item_info_parts[0][2]
+            else:
+                if len(item_info_parts[0]) == 4:
+                    value = item_info_parts[0][3]
+                else:
+                    value = item_info_parts[0][2]
+
+            if "Superior " in value:
+                value = value[9:]
+
+        else:
+            value = item_info_parts[0][2]
+            if len(item_info_parts[0]) == 4:
+                value += " " + item_info_parts[0][3]
 
     else:
         raise KeyError(f"Для ключа '{key}' не указан алгоритм получения информации по предмету")
